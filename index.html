@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>BAC World</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section id="mainMenu" class="menu-screen" aria-label="main menu">
+        <header class="menu-header">
+          <h1>BAC World</h1>
+          <p>Offline prototype menu</p>
+        </header>
+        <div class="menu-actions">
+          <button id="matchmakingButton" type="button">1v1 PVP Matchmaking</button>
+          <button id="createRoomButton" type="button">Create Room</button>
+          <button id="joinRoomButton" type="button">Join Room</button>
+        </div>
+      </section>
+
+      <section id="joinRoomScreen" class="menu-screen hidden" aria-label="join room">
+        <header class="menu-header">
+          <h1>Join Room</h1>
+          <p>Firebase/P2P not connected yet</p>
+        </header>
+        <div class="menu-panel">
+          <label class="room-code-field">
+            <span>Room Code</span>
+            <input id="joinRoomCodeInput" type="text" maxlength="6" autocomplete="off" placeholder="A7K2Q9" />
+          </label>
+          <p id="joinRoomMessage" class="muted">Enter a 6 character room code.</p>
+          <div class="join-actions">
+            <button id="joinRoomSubmitButton" type="button">Join</button>
+            <button id="backFromJoinButton" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="matchmakingScreen" class="menu-screen hidden" aria-label="matchmaking">
+        <header class="menu-header">
+          <h1>1v1 PVP Matchmaking</h1>
+          <p>Coming Soon</p>
+        </header>
+        <div class="menu-panel">
+          <p>Online matchmaking is not implemented yet.</p>
+          <button id="cancelMatchmakingButton" type="button">Back</button>
+        </div>
+      </section>
+
+      <section id="roomLobby" class="menu-screen hidden" aria-label="room lobby">
+        <header class="menu-header">
+          <h1>Room Lobby</h1>
+          <p id="roomCodeText">Room Code: ------</p>
+        </header>
+        <div class="room-grid">
+          <section class="menu-panel">
+            <h2>Session</h2>
+            <p id="roomSessionTypeText">Session Type: -</p>
+            <p id="roomModeText">Current Mode: -</p>
+            <p id="roomOnlineStatusText">Online status: Local only</p>
+            <p id="roomLobbyMessage" class="muted"></p>
+          </section>
+          <section class="menu-panel">
+            <h2>Players</h2>
+            <ul id="roomPlayerList" class="room-player-list"></ul>
+            <p class="muted">Waiting for another player</p>
+            <button id="copyRoomCodeButton" type="button">Copy Code</button>
+            <button id="readyRoomButton" type="button">Ready</button>
+          </section>
+          <section class="menu-panel">
+            <h2>Mode</h2>
+            <div class="mode-card-grid">
+              <button id="practiceModeButton" class="mode-card selected" type="button">
+                <strong>Practice Mode</strong>
+                <span>Playable now</span>
+              </button>
+              <button id="pvpRoomModeButton" class="mode-card" type="button">
+                <strong>1v1 PVP Room</strong>
+                <span>Selection sync test</span>
+              </button>
+            </div>
+            <button id="startRoomModeButton" type="button">Start</button>
+          </section>
+          <section class="menu-panel">
+            <h2>P2P Test</h2>
+            <p id="p2pStatusText">P2P Status: idle</p>
+            <p id="p2pRoleText">Local Role: -</p>
+            <p id="p2pChannelText">DataChannel: closed</p>
+            <p id="p2pHintText" class="muted">Waiting for player</p>
+            <div class="p2p-actions">
+              <button id="p2pConnectButton" type="button">P2P Connect</button>
+              <button id="p2pPingButton" type="button">Ping</button>
+              <button id="p2pDisconnectButton" type="button">Disconnect</button>
+            </div>
+            <ul id="p2pLogList" class="p2p-log-list"></ul>
+          </section>
+        </div>
+        <div class="room-actions">
+          <button id="leaveRoomButton" class="secondary-button" type="button">Leave Room</button>
+          <button id="backFromRoomButton" class="secondary-button" type="button">Back</button>
+        </div>
+      </section>
+
+      <section id="characterSelect" class="character-select hidden" aria-label="character selection">
+        <header class="select-header">
+          <h1 id="characterSelectTitle">BAC World</h1>
+          <p id="characterSelectSubtitle">Choose fighters for the offline 1v1 prototype.</p>
+          <p id="selectionStatusText" class="selection-status"></p>
+        </header>
+        <div class="selected-fighter-grid">
+          <section id="p1PreviewPanel" class="fighter-preview-panel" aria-label="P1 selected fighter">
+          </section>
+          <section id="p2PreviewPanel" class="fighter-preview-panel" aria-label="P2 selected fighter">
+          </section>
+        </div>
+        <section class="selection-options" aria-label="selection options">
+          <div class="selection-options-header">
+            <h2 id="selectionOptionsTitle">Choose Character</h2>
+            <span id="pickTimerText" class="pick-timer hidden"></span>
+          </div>
+          <div id="characterCards" class="character-card-grid"></div>
+          <div id="mapCards" class="map-card-grid"></div>
+        </section>
+        <div class="select-actions">
+          <button id="backFromSelectButton" class="secondary-button" type="button">Back</button>
+          <button id="confirmCharacterButton" class="secondary-button" type="button">Confirm Character</button>
+          <button id="startMatchButton" class="start-button" type="button">Start Match</button>
+        </div>
+      </section>
+
+      <section id="preMatchPreview" class="menu-screen hidden" aria-label="pre match preview">
+        <div class="preview-panel">
+          <h1 id="preMatchTitle">P1 Basic VS P2 Heavy</h1>
+          <p id="preMatchMapText">Map: Training</p>
+          <p id="preMatchTimerText">Starting in 3...</p>
+        </div>
+      </section>
+
+      <section id="onlineBattleReady" class="menu-screen hidden" aria-label="online battle ready">
+        <div class="preview-panel">
+          <h1>Online Battle Ready</h1>
+          <p>Ready for next step: input sync</p>
+          <p>Online battle sync is not implemented yet.</p>
+          <button id="backToRoomLobbyButton" type="button">Back to Room Lobby</button>
+        </div>
+      </section>
+
+      <section id="gameStage" class="game-stage hidden" aria-label="BAC World game">
+        <canvas id="gameCanvas" width="960" height="540"></canvas>
+      </section>
+      <section id="controlsPanel" class="controls hidden" aria-label="controls">
+        <div>
+          <strong>P1 Basic</strong>
+          <span>A/D move, W jump, S drop, J attack, K skill1, L skill2</span>
+        </div>
+        <div>
+          <strong>P2 Heavy</strong>
+          <span>Left/Right move, Up jump, Down drop, / attack, K skill1, L skill2</span>
+        </div>
+        <div>
+          <strong>Restart</strong>
+          <span>R rematch after match</span>
+        </div>
+        <div>
+          <strong>Select</strong>
+          <span>Esc after match</span>
+        </div>
+      </section>
+      <section id="onlineDebugPanel" class="online-debug hidden" aria-label="online debug">
+        <span id="onlineDebugText">
+          Netcode: Rollback / Role: - / Slot: - / DataChannel: closed
+        </span>
+        <label>
+          Delay
+          <select id="onlineInputDelaySelect" aria-label="online input delay">
+            <option value="0">0</option>
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+          </select>
+        </label>
+        <label>
+          Window
+          <select id="onlineRollbackWindowSelect" aria-label="rollback window">
+            <option value="8">8</option>
+            <option value="12" selected>12</option>
+            <option value="16">16</option>
+          </select>
+        </label>
+        <label>
+          Debug
+          <input id="showNetworkDebugToggle" type="checkbox" checked />
+        </label>
+        <ol id="rollbackLogList" class="rollback-log"></ol>
+      </section>
+      <section id="gameOverActions" class="game-over-actions hidden" aria-label="match actions">
+        <button id="restartMatchButton" type="button">Restart Same Match</button>
+        <button id="backToSelectButton" type="button">Change Characters</button>
+      </section>
+    </main>
+    <script type="module" src="./game/main.js"></script>
+  </body>
+</html>

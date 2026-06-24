@@ -1,0 +1,6 @@
+.edge-*/
+.agents/
+.codex/
+node_modules/
+*.log
+
