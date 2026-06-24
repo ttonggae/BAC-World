@@ -1,3 +1,5 @@
+import { adaptEditorCharacters } from "./editorAdapter.js";
+
 export const CHARACTERS = {
   basic: {
     id: "basic",
@@ -62,4 +64,5 @@ export const CHARACTERS = {
       special: null,
     },
   },
+  ...adaptEditorCharacters(),
 };

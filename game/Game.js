@@ -33,6 +33,7 @@ const P1_CONTROLS = {
   attack: "KeyJ",
   skill1: "KeyK",
   skill2: "KeyL",
+  movementSkill: "ShiftLeft",
 };
 
 const P2_CONTROLS = {
@@ -43,6 +44,7 @@ const P2_CONTROLS = {
   attack: "Slash",
   skill1: "KeyK",
   skill2: "KeyL",
+  movementSkill: "ShiftRight",
 };
 
 const ONLINE_P1_CONTROLS = {
@@ -53,6 +55,7 @@ const ONLINE_P1_CONTROLS = {
   attack: "OnlineP1Attack",
   skill1: "OnlineP1Skill1",
   skill2: "OnlineP1Skill2",
+  movementSkill: "OnlineP1MovementSkill",
 };
 
 const ONLINE_P2_CONTROLS = {
@@ -63,6 +66,7 @@ const ONLINE_P2_CONTROLS = {
   attack: "OnlineP2Attack",
   skill1: "OnlineP2Skill1",
   skill2: "OnlineP2Skill2",
+  movementSkill: "OnlineP2MovementSkill",
 };
 
 const MATCH_POINT = 2;
@@ -1865,6 +1869,7 @@ export class Game {
         winnerIndex: this.match.winner ? this.match.characters.indexOf(this.match.winner) : null,
       },
       rngState: this.onlineRngState,
+      simulationTick: this.match.simulationTick,
       inputState: {
         lastKnown: {
           p1: cloneOnlineInput(this.onlineLastKnownInput.p1),
@@ -1901,6 +1906,7 @@ export class Game {
         : null;
     this.match.combat.lastHit = null;
     this.onlineRngState = snapshot.rngState;
+    this.match.simulationTick = snapshot.simulationTick ?? snapshot.onlineTick;
     this.onlineLastKnownInput = {
       p1: cloneOnlineInput(snapshot.inputState?.lastKnown?.p1),
       p2: cloneOnlineInput(snapshot.inputState?.lastKnown?.p2),
@@ -1999,10 +2005,16 @@ export class Game {
         character.facing,
         character.onGround ? 1 : 0,
         quantize(character.hitStun),
+        character.castLockTicks ?? 0,
+        character.dashTicks ?? 0,
         character.pendingAbility?.abilityId ?? "",
+        ...Object.entries(character.cooldownTicks ?? {})
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .flatMap(([abilityId, ticks]) => [abilityId, ticks]),
       ]),
       projectiles.length,
       ...projectiles.flatMap((projectile) => [
+        projectile.id ?? "",
         quantize(projectile.x),
         quantize(projectile.y),
         quantize(projectile.vx),
@@ -2027,6 +2039,9 @@ export class Game {
       facing: character.facing,
       onGround: character.onGround,
       hitStun: character.hitStun,
+      castLockTicks: character.castLockTicks,
+      dashTicks: character.dashTicks,
+      cooldownTicks: { ...character.cooldownTicks },
       pendingAbility: character.pendingAbility?.abilityId ?? null,
     });
     return {
@@ -2085,6 +2100,8 @@ export class Game {
       attack: this.input.isDown("KeyJ"),
       skill1: this.input.isDown("KeyK"),
       skill2: this.input.isDown("KeyL"),
+      movementSkill:
+        this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
     };
   }
 
@@ -2809,8 +2826,10 @@ export class Game {
           ["HP", "-"],
           ["Stamina", "-"],
           ["Speed", "-"],
-          ["Skill1", "-"],
-          ["Skill2", "-"],
+          ["Jump", "-"],
+          ["J", "-"],
+          ["K", "-"],
+          ["L", "-"],
         ];
 
     for (const [statLabel, value] of rows) {
@@ -2831,15 +2850,23 @@ export class Game {
   }
 
   getCharacterStatRows(character) {
+    const basicAttack = ABILITIES[character.abilities.basicAttack];
+    const movementSkill = ABILITIES[character.abilities.movementSkill];
     const skill = ABILITIES[character.abilities.skill1];
     const skill2 = ABILITIES[character.abilities.skill2];
-    return [
+    const rows = [
       ["HP", character.stats.maxHp],
       ["Stamina", character.stats.maxStamina],
       ["Speed", character.stats.moveSpeed],
-      ["Skill1", skill ? skill.name : "None"],
-      ["Skill2", skill2 ? skill2.name : "None"],
+      ["Jump", character.stats.jumpPower],
+      ["J", basicAttack ? basicAttack.name : "None"],
     ];
+    if (movementSkill) rows.push(["Shift", movementSkill.name]);
+    rows.push(
+      ["K", skill ? skill.name : "None"],
+      ["L", skill2 ? skill2.name : "None"],
+    );
+    return rows;
   }
 
   renderCharacterCards(container, selectedId, targetSlot = "p1") {
@@ -2869,6 +2896,8 @@ export class Game {
       const body = document.createElement("span");
       const title = document.createElement("h3");
       title.textContent = character.name;
+      const description = document.createElement("p");
+      description.textContent = character.description ?? "";
       const stats = document.createElement("dl");
       stats.className = "character-stats";
       for (const [label, value] of this.getCharacterStatRows(character)) {
@@ -2880,7 +2909,9 @@ export class Game {
         item.append(dt, dd);
         stats.append(item);
       }
-      body.append(title, stats);
+      body.append(title);
+      if (character.description) body.append(description);
+      body.append(stats);
       card.append(preview, body);
       container.append(card);
     }
@@ -2993,9 +3024,15 @@ export class Game {
     if (labels[1]) labels[1].textContent = `P2 ${p2.name}`;
     const hints = this.ui.controlsPanel.querySelectorAll("span");
     const online = this.currentMode === "pvpRoom" || this.gameState === "onlinePlaying";
+    const localCharacter =
+      online && this.currentSession?.localSlot === "p2" ? p2 : p1;
+    const hasMovementSkill = Boolean(localCharacter?.abilities?.movementSkill);
+    const actionHint = hasMovementSkill
+      ? "J attack, Shift dash, K steal, L throw dagger"
+      : "J attack, K skill1, L skill2";
     if (hints[0]) hints[0].textContent = online
-      ? "Local player: A/D move, W jump, S drop, J attack, K skill1, L skill2"
-      : "A/D move, W jump, S drop, J attack, K skill1, L skill2";
+      ? `Local player: A/D move, W jump, S drop, ${actionHint}`
+      : `A/D move, W jump, S drop, ${actionHint}`;
     if (hints[1]) {
       hints[1].textContent = online
         ? "Both players simulate predicted P2P inputs"
@@ -3025,6 +3062,7 @@ function createEmptyOnlineInput() {
     attack: false,
     skill1: false,
     skill2: false,
+    movementSkill: false,
   };
 }
 
@@ -3062,6 +3100,7 @@ function normalizeOnlineInput(input = {}) {
     attack: Boolean(input.attack),
     skill1: Boolean(input.skill1),
     skill2: Boolean(input.skill2),
+    movementSkill: Boolean(input.movementSkill),
   };
 }
 
@@ -3117,6 +3156,7 @@ function addMappedInput(target, input, controls) {
   if (input.attack) target.add(controls.attack);
   if (input.skill1) target.add(controls.skill1);
   if (input.skill2) target.add(controls.skill2);
+  if (input.movementSkill && controls.movementSkill) target.add(controls.movementSkill);
 }
 
 function cloneOnlineInput(input = {}) {
@@ -3133,7 +3173,8 @@ function inputsEqual(a, b) {
     left.down === right.down &&
     left.attack === right.attack &&
     left.skill1 === right.skill1 &&
-    left.skill2 === right.skill2
+    left.skill2 === right.skill2 &&
+    left.movementSkill === right.movementSkill
   );
 }
 
@@ -3163,6 +3204,7 @@ function serializeCharacter(character) {
     stamina: character.stamina,
     maxStamina: character.maxStamina,
     cooldowns: { ...character.cooldowns },
+    cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
@@ -3171,6 +3213,7 @@ function serializeCharacter(character) {
     guardFlash: character.guardFlash,
     weaponFlash: character.weaponFlash,
     staminaFlash: character.staminaFlash,
+    castLockTicks: character.castLockTicks,
     abilities: { ...character.abilities },
     decoration: character.decoration ? { ...character.decoration } : null,
   };
@@ -3187,6 +3230,7 @@ function applyCharacterSnapshot(character, snapshot) {
   character.stamina = snapshot.stamina;
   character.maxStamina = snapshot.maxStamina;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
+  character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs ?? {});
   character.hitStun = snapshot.hitStun ?? 0;
   character.hitFlash = snapshot.hitFlash ?? 0;
@@ -3195,6 +3239,7 @@ function applyCharacterSnapshot(character, snapshot) {
   character.guardFlash = snapshot.guardFlash ?? 0;
   character.weaponFlash = snapshot.weaponFlash ?? 0;
   character.staminaFlash = snapshot.staminaFlash ?? 0;
+  character.castLockTicks = snapshot.castLockTicks ?? 0;
 }
 
 function serializeBox(box) {
@@ -3226,14 +3271,17 @@ function serializeCharacterSnapshot(character, map) {
     staminaRegenTimer: character.staminaRegenTimer,
     staminaFlash: character.staminaFlash,
     cooldowns: { ...character.cooldowns },
+    cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
     pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
+    castLockTicks: character.castLockTicks,
     onGround: character.onGround,
     groundPlatformIndex: character.groundPlatform
       ? map.platforms.indexOf(character.groundPlatform)
       : null,
     dropTimer: character.dropTimer,
     dashTimer: character.dashTimer,
+    dashTicks: character.dashTicks,
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
@@ -3254,13 +3302,16 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.staminaRegenTimer = snapshot.staminaRegenTimer;
   character.staminaFlash = snapshot.staminaFlash;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
+  character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs);
   character.pendingAbility = snapshot.pendingAbility ? { ...snapshot.pendingAbility } : null;
+  character.castLockTicks = snapshot.castLockTicks ?? 0;
   character.onGround = Boolean(snapshot.onGround);
   character.groundPlatform =
     Number.isInteger(snapshot.groundPlatformIndex) ? map.platforms[snapshot.groundPlatformIndex] : null;
   character.dropTimer = snapshot.dropTimer;
   character.dashTimer = snapshot.dashTimer;
+  character.dashTicks = snapshot.dashTicks ?? 0;
   character.hitStun = snapshot.hitStun;
   character.hitFlash = snapshot.hitFlash;
   character.attackFlash = snapshot.attackFlash;
@@ -3294,6 +3345,7 @@ function restoreCombatSnapshot(snapshot, characters) {
 
 function copyCombatFields(entity) {
   return {
+    id: entity.id,
     abilityId: entity.abilityId,
     type: entity.type,
     x: entity.x,
@@ -3306,11 +3358,22 @@ function copyCombatFields(entity) {
     knockback: entity.knockback ? { ...entity.knockback } : null,
     knockbackMode: entity.knockbackMode,
     life: entity.life,
+    lifeTicks: entity.lifeTicks,
     remaining: entity.remaining,
+    remainingTicks: entity.remainingTicks,
     duration: entity.duration,
+    durationTicks: entity.durationTicks,
+    tickRate: entity.tickRate,
     stun: entity.stun,
     effectType: entity.effectType,
     screenShake: entity.screenShake,
+    destroyOnHit: entity.destroyOnHit,
+    destroyOnWall: entity.destroyOnWall,
+    pierce: entity.pierce,
+    visualWeaponId: entity.visualWeaponId,
+    excludePartNames: [...(entity.excludePartNames ?? [])],
+    facing: entity.facing,
+    effects: (entity.effects ?? []).map((effect) => ({ ...effect })),
   };
 }
 

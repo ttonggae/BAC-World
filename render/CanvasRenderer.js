@@ -1,4 +1,18 @@
 import { ABILITIES } from "../data/abilities.js";
+import { EDITOR_WEAPONS } from "../data/editorAdapter.js";
+
+function drawRectPath(ctx, part) {
+  ctx.beginPath();
+  if ((part.radius ?? 0) > 0 && typeof ctx.roundRect === "function") {
+    ctx.roundRect(part.x, part.y, part.w, part.h, part.radius);
+  } else {
+    ctx.rect(part.x, part.y, part.w, part.h);
+  }
+}
+
+function formatAmount(value) {
+  return Number.isInteger(value) ? value : Number(value.toFixed(1));
+}
 
 export class CanvasRenderer {
   constructor(canvas, gameSize) {
@@ -114,14 +128,33 @@ export class CanvasRenderer {
   addHitFeedback(event) {
     this.screenShakeTime = Math.max(this.screenShakeTime, 0.12 + event.screenShake * 0.01);
     this.screenShakePower = Math.max(this.screenShakePower, event.screenShake);
-    this.floatingTexts.push({
-      x: event.x,
-      y: event.y - 16,
-      text: `-${event.damage}`,
-      life: 0.65,
-      maxLife: 0.65,
-      velocityY: -46,
-    });
+    if (event.damage > 0) {
+      this.addFloatingText(event.x, event.y - 16, `-${event.damage} HP`, "#fff4b0");
+    }
+    if (event.staminaStolen > 0) {
+      this.addFloatingText(
+        event.x,
+        event.y + 4,
+        `-${formatAmount(event.staminaStolen)} STA`,
+        "#79d7ff",
+      );
+    }
+    if (event.hpRecovered > 0) {
+      this.addFloatingText(
+        event.attackerX,
+        event.attackerY - 22,
+        `+${formatAmount(event.hpRecovered)} HP`,
+        "#8ff0a4",
+      );
+    }
+    if (event.staminaRecovered > 0) {
+      this.addFloatingText(
+        event.attackerX,
+        event.attackerY - 4,
+        `+${formatAmount(event.staminaRecovered)} STA`,
+        "#79d7ff",
+      );
+    }
     this.hitEffects.push({
       x: event.x,
       y: event.y,
@@ -129,6 +162,18 @@ export class CanvasRenderer {
       life: 0.22,
       maxLife: 0.22,
       type: event.effectType ?? "smallHit",
+    });
+  }
+
+  addFloatingText(x, y, text, color = "#fff4b0") {
+    this.floatingTexts.push({
+      x,
+      y,
+      text,
+      color,
+      life: 0.65,
+      maxLife: 0.65,
+      velocityY: -46,
     });
   }
 
@@ -220,6 +265,13 @@ export class CanvasRenderer {
   drawProjectiles(projectiles) {
     const ctx = this.ctx;
     for (const projectile of projectiles) {
+      const weapon = projectile.visualWeaponId
+        ? EDITOR_WEAPONS[projectile.visualWeaponId]
+        : null;
+      if (weapon?.visual?.parts) {
+        this.drawWeaponProjectile(projectile, weapon);
+        continue;
+      }
       ctx.fillStyle = "#fff4b0";
       ctx.fillRect(projectile.x, projectile.y, projectile.w, projectile.h);
       ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
@@ -273,10 +325,25 @@ export class CanvasRenderer {
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(character.x, character.y);
+    if (character.facing < 0) {
+      ctx.translate(character.w, 0);
+      ctx.scale(-1, 1);
+    }
 
     const isHitFlash = character.hitFlash > 0;
-    ctx.fillStyle = isHitFlash ? "#ffffff" : character.color;
-    ctx.fillRect(0, 0, character.w, character.h);
+    const weapon = character.defaultWeaponId
+      ? EDITOR_WEAPONS[character.defaultWeaponId]
+      : null;
+    if (weapon?.layer === "back") this.drawCharacterWeapon(weapon);
+
+    if (character.visual?.parts?.length) {
+      this.drawVisualParts(character.visual.parts);
+    } else {
+      ctx.fillStyle = isHitFlash ? "#ffffff" : character.color;
+      ctx.fillRect(0, 0, character.w, character.h);
+    }
+
+    if (weapon?.layer !== "back") this.drawCharacterWeapon(weapon);
 
     if (isHitFlash) {
       ctx.globalAlpha = 0.35;
@@ -299,15 +366,65 @@ export class CanvasRenderer {
       ctx.globalAlpha = 1;
     }
 
-    ctx.fillStyle = "#16191e";
-    const eyeX = character.facing > 0 ? character.w - 12 : 8;
-    ctx.fillRect(eyeX, 12, 5, 5);
+    if (!character.visual?.parts?.length) {
+      ctx.fillStyle = "#16191e";
+      ctx.fillRect(character.w - 12, 12, 5, 5);
+    }
 
     if (character.decoration?.type === "lance") {
       this.drawLance(character);
     }
 
     ctx.restore();
+  }
+
+  drawCharacterWeapon(weapon) {
+    if (!weapon?.visual?.parts) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(weapon.anchor.x, weapon.anchor.y);
+    this.drawVisualParts(weapon.visual.parts);
+    ctx.restore();
+  }
+
+  drawWeaponProjectile(projectile, weapon) {
+    const excluded = new Set(projectile.excludePartNames ?? []);
+    const parts = weapon.visual.parts.filter((part) => !excluded.has(part.name));
+    if (parts.length === 0) return;
+
+    const minX = Math.min(...parts.map((part) => part.x));
+    const minY = Math.min(...parts.map((part) => part.y));
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(projectile.x, projectile.y);
+    if ((projectile.facing ?? 1) < 0) {
+      ctx.translate(projectile.w, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.translate(-minX, -minY);
+    this.drawVisualParts(parts);
+    ctx.restore();
+  }
+
+  drawVisualParts(parts) {
+    const ctx = this.ctx;
+    for (const part of parts) {
+      if (part.type !== "rect") continue;
+      ctx.save();
+      ctx.globalAlpha = part.opacity ?? 1;
+      if (part.fill) {
+        ctx.fillStyle = part.fill;
+        drawRectPath(ctx, part);
+        ctx.fill();
+      }
+      if (part.stroke && (part.lineWidth ?? 0) > 0) {
+        ctx.strokeStyle = part.stroke;
+        ctx.lineWidth = part.lineWidth;
+        drawRectPath(ctx, part);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   drawHitEffects() {
@@ -351,7 +468,7 @@ export class CanvasRenderer {
       const alpha = Math.max(0, text.life / text.maxLife);
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = "#fff4b0";
+      ctx.fillStyle = text.color ?? "#fff4b0";
       ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
       ctx.lineWidth = 3;
       ctx.font = "700 18px sans-serif";
@@ -438,8 +555,13 @@ export class CanvasRenderer {
   drawStatusBars(character, x, y, alignRight, width) {
     this.drawHealth(character, x, y, alignRight, width);
     this.drawStamina(character, x, y + 30, alignRight, width);
-    this.drawSkillStatus(character, x, y + 48, alignRight, width);
-    this.drawSkill2Status(character, x, y + 62, alignRight, width);
+    let skillY = y + 48;
+    if (character.abilities.movementSkill) {
+      this.drawMovementSkillStatus(character, x, skillY, alignRight, width);
+      skillY += 14;
+    }
+    this.drawSkillStatus(character, x, skillY, alignRight, width);
+    this.drawSkill2Status(character, x, skillY + 14, alignRight, width);
   }
 
   drawHealth(character, x, y, alignRight, width) {
@@ -516,6 +638,24 @@ export class CanvasRenderer {
     ctx.textAlign = alignRight ? "right" : "left";
     ctx.fillText(
       `K ${label}: ${status}`,
+      alignRight ? x + width : x,
+      y,
+    );
+  }
+
+  drawMovementSkillStatus(character, x, y, alignRight, width) {
+    const ctx = this.ctx;
+    const skillId = character.abilities.movementSkill;
+    const ability = skillId ? ABILITIES[skillId] : null;
+    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
+    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
+
+    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
+    ctx.font = "11px sans-serif";
+    ctx.textBaseline = "top";
+    ctx.textAlign = alignRight ? "right" : "left";
+    ctx.fillText(
+      `Shift ${ability?.name ?? "No Skill"}: ${status}`,
       alignRight ? x + width : x,
       y,
     );

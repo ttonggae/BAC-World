@@ -22,6 +22,7 @@ export class OfflineMatch {
     this.combat = new CombatSystem();
     this.visualEvents = [];
     this.winner = null;
+    this.simulationTick = 0;
   }
 
   update(dt, input) {
@@ -32,6 +33,7 @@ export class OfflineMatch {
       map: this.map,
       combat: this.combat,
       visualEvents: this.visualEvents,
+      simulationTick: this.simulationTick,
     };
 
     for (const character of this.characters) {
@@ -42,6 +44,7 @@ export class OfflineMatch {
       this.updatePracticeDummies(dt);
     }
     this.resolveWinner();
+    this.simulationTick += 1;
   }
 
   updatePracticeDummies(dt) {
@@ -66,8 +69,10 @@ export class OfflineMatch {
     character.stamina = character.maxStamina;
     character.staminaRegenTimer = 0;
     character.cooldowns = {};
+    character.cooldownTicks = {};
     character.buffs = {};
     character.pendingAbility = null;
+    character.castLockTicks = 0;
     character.hitStun = 0;
     character.hitFlash = 0.18;
     character.attackFlash = 0;
@@ -75,6 +80,7 @@ export class OfflineMatch {
     character.guardFlash = 0;
     character.weaponFlash = 0;
     character.dashTimer = 0;
+    character.dashTicks = 0;
     character.dummyRespawnTimer = 0;
   }
 

@@ -1,3 +1,5 @@
+import { adaptEditorActions } from "./editorAdapter.js";
+
 export const ABILITIES = {
   basic_punch: {
     id: "basic_punch",
@@ -139,4 +141,5 @@ export const ABILITIES = {
     moveTime: 0.12,
     useEffectType: "backStepAfterimage",
   },
+  ...adaptEditorActions(),
 };

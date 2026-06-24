@@ -23,8 +23,10 @@ export class CharacterBase {
     this.controls = controls;
     this.abilities = { ...data.abilities };
     this.cooldowns = {};
+    this.cooldownTicks = {};
     this.buffs = {};
     this.pendingAbility = null;
+    this.castLockTicks = 0;
     this.weight = stats.weight;
     this.movement = {
       speed: stats.moveSpeed,
@@ -56,10 +58,15 @@ export class CharacterBase {
     this.facing = spawn.facing;
     this.playerIndex = playerIndex;
     this.decoration = data.decoration ?? null;
+    this.visual = data.visual ?? null;
+    this.defaultWeaponId = data.defaultWeaponId ?? null;
+    this.actionIds = [...(data.actionIds ?? [])];
+    this.extraActionIds = [...(data.extraActionIds ?? [])];
     this.onGround = false;
     this.dropTimer = 0;
     this.groundPlatform = null;
     this.dashTimer = 0;
+    this.dashTicks = 0;
     this.hitStun = 0;
     this.hitFlash = 0;
     this.attackFlash = 0;
@@ -86,44 +93,55 @@ export class CharacterBase {
     this.weaponFlash = Math.max(0, this.weaponFlash - dt);
     this.staminaFlash = Math.max(0, this.staminaFlash - dt);
     this.dashTimer = Math.max(0, this.dashTimer - dt);
+    this.dashTicks = Math.max(0, this.dashTicks - 1);
+    this.castLockTicks = Math.max(0, this.castLockTicks - 1);
     this.updateBuffs(dt);
     this.updateStamina(dt);
 
     updateAbilityState(this, dt, context);
     if (!this.isAlive) return;
 
-    if (this.hitStun === 0 && this.dashTimer === 0) {
-      this.handleInput(dt, context);
+    if (this.hitStun === 0) {
+      const canControlMovement = this.dashTimer === 0 && this.dashTicks === 0;
+      this.handleInput(dt, context, canControlMovement);
     }
 
     this.applyGravity(dt);
     this.moveAndCollide(dt, context.map);
   }
 
-  handleInput(dt, context) {
+  handleInput(dt, context, canControlMovement = true) {
     const input = context.input;
-    const left = input.isDown(this.controls.left);
-    const right = input.isDown(this.controls.right);
-    const direction = Number(right) - Number(left);
+    if (canControlMovement) {
+      const left = input.isDown(this.controls.left);
+      const right = input.isDown(this.controls.right);
+      const direction = Number(right) - Number(left);
 
-    if (direction !== 0) {
-      this.facing = direction;
-      this.vx = moveToward(
-        this.vx,
-        direction * this.movement.speed * this.getMoveSpeedMultiplier(),
-        this.movement.acceleration * dt,
-      );
-    } else {
-      this.vx = moveToward(this.vx, 0, this.movement.friction * dt);
+      if (direction !== 0) {
+        this.facing = direction;
+        this.vx = moveToward(
+          this.vx,
+          direction * this.movement.speed * this.getMoveSpeedMultiplier(),
+          this.movement.acceleration * dt,
+        );
+      } else {
+        this.vx = moveToward(this.vx, 0, this.movement.friction * dt);
+      }
+
+      if (input.wasPressed(this.controls.jump) && this.onGround) {
+        this.vy = -this.movement.jumpVelocity;
+        this.onGround = false;
+      }
+
+      if (input.wasPressed(this.controls.drop) && this.onGround) {
+        this.tryDropThroughPlatform();
+      }
     }
 
-    if (input.wasPressed(this.controls.jump) && this.onGround) {
-      this.vy = -this.movement.jumpVelocity;
-      this.onGround = false;
-    }
-
-    if (input.wasPressed(this.controls.drop) && this.onGround) {
-      this.tryDropThroughPlatform();
+    const thiefCastPressed =
+      this.id === "thief" && input.wasPressed(this.controls.skill2);
+    if (thiefCastPressed) {
+      useAbility(this, this.abilities.skill2, context);
     }
 
     if (input.wasPressed(this.controls.attack)) {
@@ -134,8 +152,15 @@ export class CharacterBase {
       useAbility(this, this.abilities.skill1, context);
     }
 
-    if (input.wasPressed(this.controls.skill2)) {
+    if (!thiefCastPressed && input.wasPressed(this.controls.skill2)) {
       useAbility(this, this.abilities.skill2, context);
+    }
+
+    if (
+      this.controls.movementSkill &&
+      input.wasPressed(this.controls.movementSkill)
+    ) {
+      useAbility(this, this.abilities.movementSkill, context);
     }
   }
 
