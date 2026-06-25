@@ -139,6 +139,8 @@ export const ABILITIES = {
     cooldown: 1.1,
     moveSpeed: 760,
     moveTime: 0.12,
+    invincibleTicks: 20,
+    hurtboxDisabledTicks: 20,
     useEffectType: "backStepAfterimage",
   },
   ...adaptEditorActions(),

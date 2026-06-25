@@ -25,8 +25,11 @@ export class CharacterBase {
     this.cooldowns = {};
     this.cooldownTicks = {};
     this.buffs = {};
+    this.activeStatuses = {};
     this.pendingAbility = null;
     this.castLockTicks = 0;
+    this.invincibleTicks = 0;
+    this.hurtboxDisabledTicks = 0;
     this.weight = stats.weight;
     this.movement = {
       speed: stats.moveSpeed,
@@ -95,14 +98,20 @@ export class CharacterBase {
     this.dashTimer = Math.max(0, this.dashTimer - dt);
     this.dashTicks = Math.max(0, this.dashTicks - 1);
     this.castLockTicks = Math.max(0, this.castLockTicks - 1);
+    this.invincibleTicks = Math.max(0, this.invincibleTicks - 1);
+    this.hurtboxDisabledTicks = Math.max(0, this.hurtboxDisabledTicks - 1);
     this.updateBuffs(dt);
+    this.updateStatuses();
     this.updateStamina(dt);
 
     updateAbilityState(this, dt, context);
     if (!this.isAlive) return;
 
     if (this.hitStun === 0) {
-      const canControlMovement = this.dashTimer === 0 && this.dashTicks === 0;
+      const canControlMovement =
+        this.dashTimer === 0 &&
+        this.dashTicks === 0 &&
+        !this.isMovementRestricted();
       this.handleInput(dt, context, canControlMovement);
     }
 
@@ -162,6 +171,10 @@ export class CharacterBase {
     ) {
       useAbility(this, this.abilities.movementSkill, context);
     }
+
+    if (this.controls.extra && input.wasPressed(this.controls.extra)) {
+      useAbility(this, this.abilities.extra, context);
+    }
   }
 
   updateBuffs(dt) {
@@ -175,6 +188,64 @@ export class CharacterBase {
 
   addBuff(buffId, config) {
     this.buffs[buffId] = { ...config };
+  }
+
+  addStatus(config) {
+    const sourceId = config.sourceId ?? "unknown";
+    const key = `${config.statusId}:${sourceId}`;
+    const next = {
+      ...config,
+      remainingTicks: config.durationTicks ?? 0,
+      tickTimer: config.tickInterval ?? 0,
+      ticksApplied: 0,
+    };
+    if (config.refreshRule === "ignore" && this.activeStatuses[key]) return;
+    this.activeStatuses[key] = next;
+    if (config.statusId === "root") {
+      this.vx = 0;
+    }
+  }
+
+  updateStatuses() {
+    for (const [key, status] of Object.entries(this.activeStatuses)) {
+      status.remainingTicks = Math.max(0, status.remainingTicks - 1);
+      if (
+        status.statusId === "burn" &&
+        status.ticksApplied < (status.maxTicks ?? 0)
+      ) {
+        status.tickTimer -= 1;
+        if (status.tickTimer <= 0) {
+          const damage = Math.max(0, status.damagePerTick ?? 0);
+          if (!this.isInvincible) {
+            this.health = Math.max(0, this.health - damage);
+            this.hitFlash = Math.max(this.hitFlash, 0.1);
+          }
+          status.ticksApplied += 1;
+          status.tickTimer = status.tickInterval ?? 1;
+        }
+      }
+      if (
+        status.remainingTicks <= 0 ||
+        (status.statusId === "burn" &&
+          status.ticksApplied >= (status.maxTicks ?? 0))
+      ) {
+        delete this.activeStatuses[key];
+      }
+    }
+  }
+
+  isMovementRestricted() {
+    return Object.values(this.activeStatuses).some(
+      (status) => status.statusId === "root" && status.remainingTicks > 0,
+    );
+  }
+
+  get isInvincible() {
+    return this.invincibleTicks > 0;
+  }
+
+  get isHurtboxDisabled() {
+    return this.hurtboxDisabledTicks > 0;
   }
 
   getMoveSpeedMultiplier() {
@@ -300,7 +371,7 @@ export class CharacterBase {
   }
 
   takeHit(hit) {
-    if (!this.isAlive) return 0;
+    if (!this.isAlive || this.isInvincible) return 0;
     const damage = Math.ceil(hit.damage * this.getIncomingDamageMultiplier());
     const knockbackMultiplier = this.getIncomingKnockbackMultiplier();
     this.health = Math.max(0, this.health - damage);

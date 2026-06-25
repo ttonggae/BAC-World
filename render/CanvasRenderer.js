@@ -272,7 +272,7 @@ export class CanvasRenderer {
         this.drawWeaponProjectile(projectile, weapon);
         continue;
       }
-      ctx.fillStyle = "#fff4b0";
+      ctx.fillStyle = projectile.projectileColor ?? "#fff4b0";
       ctx.fillRect(projectile.x, projectile.y, projectile.w, projectile.h);
       ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
       ctx.strokeRect(projectile.x, projectile.y, projectile.w, projectile.h);
@@ -562,6 +562,9 @@ export class CanvasRenderer {
     }
     this.drawSkillStatus(character, x, skillY, alignRight, width);
     this.drawSkill2Status(character, x, skillY + 14, alignRight, width);
+    if (character.abilities.extra) {
+      this.drawExtraSkillStatus(character, x, skillY + 28, alignRight, width);
+    }
   }
 
   drawHealth(character, x, y, alignRight, width) {
@@ -675,6 +678,24 @@ export class CanvasRenderer {
     ctx.textAlign = alignRight ? "right" : "left";
     ctx.fillText(
       `L ${label}: ${status}`,
+      alignRight ? x + width : x,
+      y,
+    );
+  }
+
+  drawExtraSkillStatus(character, x, y, alignRight, width) {
+    const ctx = this.ctx;
+    const skillId = character.abilities.extra;
+    const ability = skillId ? ABILITIES[skillId] : null;
+    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
+    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
+
+    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
+    ctx.font = "11px sans-serif";
+    ctx.textBaseline = "top";
+    ctx.textAlign = alignRight ? "right" : "left";
+    ctx.fillText(
+      `; ${ability?.name ?? "No Skill"}: ${status}`,
       alignRight ? x + width : x,
       y,
     );

@@ -91,6 +91,12 @@ function applyMovementAbility(player, ability) {
   if (ability.editorAction) {
     player.dashTicks = movement?.duration ?? 0;
   }
+  if ((ability.invincibleTicks ?? 0) > 0) {
+    player.invincibleTicks = ability.invincibleTicks;
+  }
+  if ((ability.hurtboxDisabledTicks ?? 0) > 0) {
+    player.hurtboxDisabledTicks = ability.hurtboxDisabledTicks;
+  }
 }
 
 function applyBuff(player, ability) {
@@ -110,7 +116,11 @@ function fireProjectile(player, ability, context) {
     return;
   }
   const size = ability.projectileSize;
+  const spawnTick = Number(context.simulationTick) || 0;
+  const instanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
   context.combat.spawnProjectile({
+    id: instanceId,
+    attackInstanceId: instanceId,
     owner: player,
     abilityId: ability.id,
     type: ability.type,
@@ -191,8 +201,11 @@ function releaseAbilityHitbox(player, ability, context) {
   const { hitbox, damage, knockback, duration, stun } = ability;
   const direction = player.facing;
   const attackBox = createAttackBox(player, ability);
+  const spawnTick = Number(context.simulationTick) || 0;
+  const attackInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
 
   context.combat.spawnHitbox({
+    attackInstanceId,
     owner: player,
     abilityId: ability.id,
     type: ability.type,
@@ -216,12 +229,17 @@ function releaseAbilityHitbox(player, ability, context) {
 
 function releaseEditorHitboxes(player, ability, context) {
   const direction = player.facing;
+  const spawnTick = Number(context.simulationTick) || 0;
+  const attackInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  const hitTargetIds = new Set();
   for (const hitbox of ability.hitboxes ?? []) {
     const x =
       direction > 0
         ? player.x + hitbox.x
         : player.x + player.w - hitbox.x - hitbox.w;
     context.combat.spawnHitbox({
+      attackInstanceId,
+      hitTargetIds,
       owner: player,
       abilityId: ability.id,
       type: ability.type,
@@ -257,8 +275,10 @@ function fireEditorProjectile(player, ability, context) {
       ? player.x + projectile.spawn.x
       : player.x + player.w - projectile.spawn.x - hitbox.w;
   const spawnTick = Number(context.simulationTick) || 0;
+  const instanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
   context.combat.spawnProjectile({
-    id: `${player.playerIndex}_${ability.id}_${spawnTick}`,
+    id: instanceId,
+    attackInstanceId: instanceId,
     owner: player,
     abilityId: ability.id,
     type: ability.type,
@@ -282,6 +302,10 @@ function fireEditorProjectile(player, ability, context) {
     destroyOnHit: projectile.destroyOnHit,
     destroyOnWall: projectile.destroyOnWall,
     pierce: projectile.pierce,
+    speed: projectile.speed,
+    homing: projectile.homing ? { ...projectile.homing } : null,
+    projectileColor: projectile.color ?? null,
+    effects: ability.effects.map((effect) => ({ ...effect })),
     visualWeaponId: projectile.visualWeaponId,
     excludePartNames: [...(projectile.excludePartNames ?? [])],
     facing: direction,

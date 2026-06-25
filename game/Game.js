@@ -34,6 +34,7 @@ const P1_CONTROLS = {
   skill1: "KeyK",
   skill2: "KeyL",
   movementSkill: "ShiftLeft",
+  extra: "Semicolon",
 };
 
 const P2_CONTROLS = {
@@ -45,6 +46,7 @@ const P2_CONTROLS = {
   skill1: "KeyK",
   skill2: "KeyL",
   movementSkill: "ShiftRight",
+  extra: "Semicolon",
 };
 
 const ONLINE_P1_CONTROLS = {
@@ -56,6 +58,7 @@ const ONLINE_P1_CONTROLS = {
   skill1: "OnlineP1Skill1",
   skill2: "OnlineP1Skill2",
   movementSkill: "OnlineP1MovementSkill",
+  extra: "OnlineP1Extra",
 };
 
 const ONLINE_P2_CONTROLS = {
@@ -67,6 +70,7 @@ const ONLINE_P2_CONTROLS = {
   skill1: "OnlineP2Skill1",
   skill2: "OnlineP2Skill2",
   movementSkill: "OnlineP2MovementSkill",
+  extra: "OnlineP2Extra",
 };
 
 const MATCH_POINT = 2;
@@ -1886,10 +1890,11 @@ export class Game {
       const character = this.match.characters[index];
       if (character) restoreCharacterSnapshot(character, snapshot.players[index], this.map);
     }
+    const sharedHitTargetSets = new Map();
     this.match.combat.hitboxes = (snapshot.combat?.hitboxes ?? []).map((hitbox) =>
-      restoreCombatSnapshot(hitbox, this.match.characters));
+      restoreCombatSnapshot(hitbox, this.match.characters, sharedHitTargetSets));
     this.match.combat.projectiles = (snapshot.combat?.projectiles ?? []).map((projectile) =>
-      restoreCombatSnapshot(projectile, this.match.characters));
+      restoreCombatSnapshot(projectile, this.match.characters, sharedHitTargetSets));
     this.match.combat.hitEvents = [];
     this.match.visualEvents = [];
     this.onlineTick = snapshot.onlineTick;
@@ -2007,6 +2012,9 @@ export class Game {
         quantize(character.hitStun),
         character.castLockTicks ?? 0,
         character.dashTicks ?? 0,
+        character.invincibleTicks ?? 0,
+        character.hurtboxDisabledTicks ?? 0,
+        JSON.stringify(character.activeStatuses ?? {}),
         character.pendingAbility?.abilityId ?? "",
         ...Object.entries(character.cooldownTicks ?? {})
           .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
@@ -2041,6 +2049,9 @@ export class Game {
       hitStun: character.hitStun,
       castLockTicks: character.castLockTicks,
       dashTicks: character.dashTicks,
+      invincibleTicks: character.invincibleTicks,
+      hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+      activeStatuses: clonePlainObject(character.activeStatuses),
       cooldownTicks: { ...character.cooldownTicks },
       pendingAbility: character.pendingAbility?.abilityId ?? null,
     });
@@ -2102,6 +2113,7 @@ export class Game {
       skill2: this.input.isDown("KeyL"),
       movementSkill:
         this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
+      extra: this.input.isDown("Semicolon"),
     };
   }
 
@@ -2854,6 +2866,7 @@ export class Game {
     const movementSkill = ABILITIES[character.abilities.movementSkill];
     const skill = ABILITIES[character.abilities.skill1];
     const skill2 = ABILITIES[character.abilities.skill2];
+    const extra = ABILITIES[character.abilities.extra];
     const rows = [
       ["HP", character.stats.maxHp],
       ["Stamina", character.stats.maxStamina],
@@ -2866,6 +2879,7 @@ export class Game {
       ["K", skill ? skill.name : "None"],
       ["L", skill2 ? skill2.name : "None"],
     );
+    if (extra) rows.push([";", extra.name]);
     return rows;
   }
 
@@ -3026,10 +3040,12 @@ export class Game {
     const online = this.currentMode === "pvpRoom" || this.gameState === "onlinePlaying";
     const localCharacter =
       online && this.currentSession?.localSlot === "p2" ? p2 : p1;
-    const hasMovementSkill = Boolean(localCharacter?.abilities?.movementSkill);
-    const actionHint = hasMovementSkill
-      ? "J attack, Shift dash, K steal, L throw dagger"
-      : "J attack, K skill1, L skill2";
+    const actionHint =
+      localCharacter?.id === "thief"
+        ? "J attack, Shift dash, K steal, L throw dagger"
+        : localCharacter?.id === "wizard"
+          ? "J staff, K fireball, L missile, ; ice bolt"
+          : "J attack, K skill1, L skill2";
     if (hints[0]) hints[0].textContent = online
       ? `Local player: A/D move, W jump, S drop, ${actionHint}`
       : `A/D move, W jump, S drop, ${actionHint}`;
@@ -3063,6 +3079,7 @@ function createEmptyOnlineInput() {
     skill1: false,
     skill2: false,
     movementSkill: false,
+    extra: false,
   };
 }
 
@@ -3101,6 +3118,7 @@ function normalizeOnlineInput(input = {}) {
     skill1: Boolean(input.skill1),
     skill2: Boolean(input.skill2),
     movementSkill: Boolean(input.movementSkill),
+    extra: Boolean(input.extra),
   };
 }
 
@@ -3157,6 +3175,7 @@ function addMappedInput(target, input, controls) {
   if (input.skill1) target.add(controls.skill1);
   if (input.skill2) target.add(controls.skill2);
   if (input.movementSkill && controls.movementSkill) target.add(controls.movementSkill);
+  if (input.extra && controls.extra) target.add(controls.extra);
 }
 
 function cloneOnlineInput(input = {}) {
@@ -3174,7 +3193,8 @@ function inputsEqual(a, b) {
     left.attack === right.attack &&
     left.skill1 === right.skill1 &&
     left.skill2 === right.skill2 &&
-    left.movementSkill === right.movementSkill
+    left.movementSkill === right.movementSkill &&
+    left.extra === right.extra
   );
 }
 
@@ -3206,6 +3226,7 @@ function serializeCharacter(character) {
     cooldowns: { ...character.cooldowns },
     cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
+    activeStatuses: clonePlainObject(character.activeStatuses),
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
@@ -3214,6 +3235,8 @@ function serializeCharacter(character) {
     weaponFlash: character.weaponFlash,
     staminaFlash: character.staminaFlash,
     castLockTicks: character.castLockTicks,
+    invincibleTicks: character.invincibleTicks,
+    hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     abilities: { ...character.abilities },
     decoration: character.decoration ? { ...character.decoration } : null,
   };
@@ -3232,6 +3255,7 @@ function applyCharacterSnapshot(character, snapshot) {
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs ?? {});
+  character.activeStatuses = clonePlainObject(snapshot.activeStatuses ?? {});
   character.hitStun = snapshot.hitStun ?? 0;
   character.hitFlash = snapshot.hitFlash ?? 0;
   character.attackFlash = snapshot.attackFlash ?? 0;
@@ -3240,6 +3264,8 @@ function applyCharacterSnapshot(character, snapshot) {
   character.weaponFlash = snapshot.weaponFlash ?? 0;
   character.staminaFlash = snapshot.staminaFlash ?? 0;
   character.castLockTicks = snapshot.castLockTicks ?? 0;
+  character.invincibleTicks = snapshot.invincibleTicks ?? 0;
+  character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
 }
 
 function serializeBox(box) {
@@ -3273,8 +3299,11 @@ function serializeCharacterSnapshot(character, map) {
     cooldowns: { ...character.cooldowns },
     cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
+    activeStatuses: clonePlainObject(character.activeStatuses),
     pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
     castLockTicks: character.castLockTicks,
+    invincibleTicks: character.invincibleTicks,
+    hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     onGround: character.onGround,
     groundPlatformIndex: character.groundPlatform
       ? map.platforms.indexOf(character.groundPlatform)
@@ -3304,8 +3333,11 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs);
+  character.activeStatuses = clonePlainObject(snapshot.activeStatuses);
   character.pendingAbility = snapshot.pendingAbility ? { ...snapshot.pendingAbility } : null;
   character.castLockTicks = snapshot.castLockTicks ?? 0;
+  character.invincibleTicks = snapshot.invincibleTicks ?? 0;
+  character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
   character.onGround = Boolean(snapshot.onGround);
   character.groundPlatform =
     Number.isInteger(snapshot.groundPlatformIndex) ? map.platforms[snapshot.groundPlatformIndex] : null;
@@ -3325,27 +3357,28 @@ function serializeCombatSnapshot(entity, characters) {
   return {
     ...copyCombatFields(entity),
     ownerIndex,
-    hitTargetIndexes: entity.hitTargets
-      ? [...entity.hitTargets].map((target) => characters.indexOf(target)).filter((index) => index >= 0)
-      : [],
+    hitTargetIds: [...(entity.hitTargetIds ?? [])],
   };
 }
 
-function restoreCombatSnapshot(snapshot, characters) {
+function restoreCombatSnapshot(snapshot, characters, sharedHitTargetSets = new Map()) {
+  const setKey = snapshot.attackInstanceId ?? snapshot.id;
+  let hitTargetIds = setKey ? sharedHitTargetSets.get(setKey) : null;
+  if (!hitTargetIds) {
+    hitTargetIds = new Set(snapshot.hitTargetIds ?? []);
+    if (setKey) sharedHitTargetSets.set(setKey, hitTargetIds);
+  }
   return {
     ...copyCombatFields(snapshot),
     owner: characters[snapshot.ownerIndex] ?? null,
-    hitTargets: new Set(
-      (snapshot.hitTargetIndexes ?? [])
-        .map((index) => characters[index])
-        .filter(Boolean),
-    ),
+    hitTargetIds,
   };
 }
 
 function copyCombatFields(entity) {
   return {
     id: entity.id,
+    attackInstanceId: entity.attackInstanceId,
     abilityId: entity.abilityId,
     type: entity.type,
     x: entity.x,
@@ -3370,6 +3403,9 @@ function copyCombatFields(entity) {
     destroyOnHit: entity.destroyOnHit,
     destroyOnWall: entity.destroyOnWall,
     pierce: entity.pierce,
+    speed: entity.speed,
+    homing: entity.homing ? { ...entity.homing } : null,
+    projectileColor: entity.projectileColor,
     visualWeaponId: entity.visualWeaponId,
     excludePartNames: [...(entity.excludePartNames ?? [])],
     facing: entity.facing,

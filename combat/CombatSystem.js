@@ -9,18 +9,26 @@ export class CombatSystem {
   }
 
   spawnHitbox(hitbox) {
+    const hitTargetIds =
+      hitbox.hitTargetIds instanceof Set ? hitbox.hitTargetIds : new Set();
     this.hitboxes.push({
       ...hitbox,
       remaining: hitbox.duration,
       remainingTicks: Number.isInteger(hitbox.durationTicks)
         ? hitbox.durationTicks
         : null,
-      hitTargets: new Set(),
+      hitTargetIds,
     });
   }
 
   spawnProjectile(projectile) {
-    this.projectiles.push({ ...projectile });
+    this.projectiles.push({
+      ...projectile,
+      hitTargetIds:
+        projectile.hitTargetIds instanceof Set
+          ? projectile.hitTargetIds
+          : new Set(),
+    });
   }
 
   update(dt, characters, map) {
@@ -35,10 +43,13 @@ export class CombatSystem {
         hitbox.remaining -= dt;
       }
       for (const target of characters) {
+        const targetId = getTargetId(target);
         if (
           target === hitbox.owner ||
           !target.isAlive ||
-          hitbox.hitTargets.has(target) ||
+          target.isInvincible ||
+          target.isHurtboxDisabled ||
+          hitbox.hitTargetIds.has(targetId) ||
           !intersects(hitbox, target.bounds)
         ) {
           continue;
@@ -47,13 +58,13 @@ export class CombatSystem {
         const knockback = getKnockback(hitbox, target);
         const effectResult = applyHitEffects(hitbox, target);
         const damage =
-          effectResult.handled
+          effectResult.replacesDamage
             ? applyEffectHitReaction(hitbox, target, knockback, effectResult.hpStolen)
             : target.takeHit({
                 ...hitbox,
                 knockback,
               });
-        hitbox.hitTargets.add(target);
+        hitbox.hitTargetIds.add(targetId);
         const hitEvent = createHitEvent(hitbox, target, damage, effectResult);
         this.hitEvents.push(hitEvent);
         this.lastHit = { attacker: hitbox.owner, target, hitEvent };
@@ -69,6 +80,7 @@ export class CombatSystem {
 
   updateProjectiles(dt, characters, map) {
     for (const projectile of this.projectiles) {
+      updateHoming(projectile, characters);
       projectile.x += projectile.vx * dt;
       projectile.y += projectile.vy * dt;
       if (Number.isInteger(projectile.lifeTicks)) {
@@ -88,12 +100,29 @@ export class CombatSystem {
       }
 
       for (const target of characters) {
-        if (target === projectile.owner || !target.isAlive || !intersects(projectile, target.bounds)) {
+        const targetId = getTargetId(target);
+        if (
+          target === projectile.owner ||
+          !target.isAlive ||
+          target.isInvincible ||
+          target.isHurtboxDisabled ||
+          projectile.hitTargetIds.has(targetId) ||
+          !intersects(projectile, target.bounds)
+        ) {
           continue;
         }
 
-        const damage = target.takeHit(projectile);
-        const hitEvent = createHitEvent(projectile, target, damage);
+        const effectResult = applyHitEffects(projectile, target);
+        const damage = effectResult.replacesDamage
+          ? applyEffectHitReaction(
+              projectile,
+              target,
+              projectile.knockback,
+              effectResult.hpStolen,
+            )
+          : target.takeHit(projectile);
+        projectile.hitTargetIds.add(targetId);
+        const hitEvent = createHitEvent(projectile, target, damage, effectResult);
         this.hitEvents.push(hitEvent);
         this.lastHit = { attacker: projectile.owner, target, hitEvent };
         if (projectile.destroyOnHit !== false || (projectile.pierce ?? 0) <= 0) {
@@ -134,7 +163,7 @@ function applyHitEffects(hitbox, target) {
   const effects = hitbox.effects ?? [];
   if (effects.length === 0) {
     return {
-      handled: false,
+      replacesDamage: false,
       staminaStolen: 0,
       hpStolen: 0,
       staminaRecovered: 0,
@@ -147,8 +176,10 @@ function applyHitEffects(hitbox, target) {
   let hpStolen = 0;
   let staminaRecovered = 0;
   let hpRecovered = 0;
+  let replacesDamage = false;
   for (const effect of effects) {
     if (effect.type === "stealStamina") {
+      replacesDamage = true;
       const amount = Math.max(0, Math.min(effect.maxAmount ?? 0, target.stamina));
       const before = owner.stamina;
       target.stamina -= amount;
@@ -162,22 +193,66 @@ function applyHitEffects(hitbox, target) {
         );
       }
     } else if (effect.type === "stealHp") {
+      replacesDamage = true;
       const amount = Math.max(0, Math.min(effect.maxAmount ?? 0, target.health));
       const before = owner.health;
       target.health -= amount;
       owner.health = Math.min(owner.maxHealth, owner.health + amount);
       hpStolen += amount;
       hpRecovered += owner.health - before;
+    } else if (effect.type === "status" && effect.statusId) {
+      target.addStatus({
+        ...effect,
+        sourceId: `${hitbox.owner.playerIndex}:${hitbox.abilityId}:${effect.statusId}`,
+      });
     }
   }
 
   return {
-    handled: true,
+    replacesDamage,
     staminaStolen,
     hpStolen,
     staminaRecovered,
     hpRecovered,
   };
+}
+
+function getTargetId(target) {
+  return Number.isInteger(target.playerIndex) ? target.playerIndex : target.id;
+}
+
+function updateHoming(projectile, characters) {
+  const homing = projectile.homing;
+  if (!homing || !(projectile.speed > 0)) return;
+
+  const centerX = projectile.x + projectile.w / 2;
+  const centerY = projectile.y + projectile.h / 2;
+  const rangeSquared = (homing.range ?? 0) ** 2;
+  let target = null;
+  let bestDistance = rangeSquared;
+  for (const character of characters) {
+    if (character === projectile.owner || !character.isAlive) continue;
+    const dx = character.x + character.w / 2 - centerX;
+    const dy = character.y + character.h / 2 - centerY;
+    const distance = dx * dx + dy * dy;
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      target = character;
+    }
+  }
+  if (!target) return;
+
+  const dx = target.x + target.w / 2 - centerX;
+  const dy = target.y + target.h / 2 - centerY;
+  const length = Math.hypot(dx, dy) || 1;
+  const desiredX = (dx / length) * projectile.speed;
+  const desiredY = (dy / length) * projectile.speed;
+  const factor = Math.max(0, Math.min(1, homing.factor ?? 0.1));
+  const blendedX = projectile.vx + (desiredX - projectile.vx) * factor;
+  const blendedY = projectile.vy + (desiredY - projectile.vy) * factor;
+  const blendedLength = Math.hypot(blendedX, blendedY) || 1;
+  projectile.vx = (blendedX / blendedLength) * projectile.speed;
+  projectile.vy = (blendedY / blendedLength) * projectile.speed;
 }
 
 function applyEffectHitReaction(hitbox, target, knockback, hpStolen) {

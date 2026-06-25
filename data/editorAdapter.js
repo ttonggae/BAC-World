@@ -4,13 +4,26 @@ import {
   EDITOR_CHARACTER_DATA,
   EDITOR_WEAPON_DATA,
 } from "./editorThief.js";
+import {
+  WIZARD_ACTION_DATA,
+  WIZARD_CHARACTER_DATA,
+  WIZARD_WEAPON_DATA,
+} from "./editorWizard.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
+const ALL_CHARACTER_DATA = {
+  ...EDITOR_CHARACTER_DATA,
+  ...WIZARD_CHARACTER_DATA,
+};
+const ALL_ACTION_DATA = {
+  ...EDITOR_ACTION_DATA,
+  ...WIZARD_ACTION_DATA,
+};
 
 export function adaptEditorCharacters() {
   return Object.fromEntries(
-    Object.values(EDITOR_CHARACTER_DATA).map((character) => [
+    Object.values(ALL_CHARACTER_DATA).map((character) => [
       character.id,
       {
         id: character.id,
@@ -32,11 +45,13 @@ export function adaptEditorCharacters() {
           skill1: character.actionSlots.skill1,
           skill2: character.actionSlots.skill2,
           movementSkill: character.actionSlots.movementSkill ?? null,
+          extra: character.actionSlots.extra ?? null,
           special: null,
         },
         actionIds: [...character.actionIds],
         extraActionIds: [...character.extraActionIds],
         defaultWeaponId: character.defaultWeaponId,
+        defaultActionId: character.defaultActionId,
         visual: character.visual,
         editorSchemaVersion: BAC_EDITOR_SCHEMA.version,
       },
@@ -46,7 +61,7 @@ export function adaptEditorCharacters() {
 
 export function adaptEditorActions() {
   return Object.fromEntries(
-    Object.values(EDITOR_ACTION_DATA).map((action) => [
+    Object.values(ALL_ACTION_DATA).map((action) => [
       action.id,
       {
         id: action.id,
@@ -78,13 +93,19 @@ export function adaptEditorActions() {
           ? {
               ...action.projectile,
               spawn: { ...action.projectile.spawn },
+              homing: action.projectile.homing
+                ? { ...action.projectile.homing }
+                : null,
               lifetimeSeconds: ticksToSeconds(action.projectile.lifetime),
             }
           : null,
         effects: action.effects?.map((effect) => ({ ...effect })) ?? [],
         effectsImplemented: true,
-        castLockTicks:
-          action.kind === "projectile" ? action.startup + action.recovery : 0,
+        castLockTicks: action.lockActions
+          ? action.startup + action.recovery
+          : action.kind === "projectile"
+            ? action.startup + action.recovery
+            : 0,
         stun: action.kind === "projectile" ? ticksToSeconds(5) : ticksToSeconds(4),
         screenShake: action.kind === "projectile" ? 3 : action.kind === "melee" ? 2 : 0,
         effectType: action.kind === "projectile" ? "slashHit" : "smallHit",
@@ -99,7 +120,10 @@ export function adaptEditorActions() {
   );
 }
 
-export const EDITOR_WEAPONS = EDITOR_WEAPON_DATA;
+export const EDITOR_WEAPONS = {
+  ...EDITOR_WEAPON_DATA,
+  ...WIZARD_WEAPON_DATA,
+};
 
 function adaptActionType(kind) {
   if (kind === "effectMelee") return "effectMelee";

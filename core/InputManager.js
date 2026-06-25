@@ -8,6 +8,7 @@ const GAME_KEYS = new Set([
   "KeyL",
   "ShiftLeft",
   "ShiftRight",
+  "Semicolon",
   "KeyR",
   "Escape",
   "ArrowLeft",
