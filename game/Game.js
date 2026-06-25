@@ -2012,6 +2012,9 @@ export class Game {
         quantize(character.hitStun),
         character.castLockTicks ?? 0,
         character.dashTicks ?? 0,
+        character.dashStopOnEnd ? 1 : 0,
+        character.actionWeaponVisualId ?? "",
+        character.actionWeaponVisualTicks ?? 0,
         character.invincibleTicks ?? 0,
         character.hurtboxDisabledTicks ?? 0,
         JSON.stringify(character.activeStatuses ?? {}),
@@ -2028,6 +2031,9 @@ export class Game {
         quantize(projectile.vx),
         quantize(projectile.vy),
         quantize(projectile.life),
+        projectile.homingActive ? 1 : 0,
+        projectile.hasReleasedHoming ? 1 : 0,
+        projectile.lockedTargetId ?? "",
         this.match.characters.indexOf(projectile.owner),
       ]),
       quantize(this.roundTimer),
@@ -2049,6 +2055,9 @@ export class Game {
       hitStun: character.hitStun,
       castLockTicks: character.castLockTicks,
       dashTicks: character.dashTicks,
+      dashStopOnEnd: character.dashStopOnEnd,
+      actionWeaponVisualId: character.actionWeaponVisualId,
+      actionWeaponVisualTicks: character.actionWeaponVisualTicks,
       invincibleTicks: character.invincibleTicks,
       hurtboxDisabledTicks: character.hurtboxDisabledTicks,
       activeStatuses: clonePlainObject(character.activeStatuses),
@@ -2066,6 +2075,9 @@ export class Game {
         vy: projectile.vy,
         owner: this.match.characters.indexOf(projectile.owner),
         abilityId: projectile.abilityId,
+        homingActive: projectile.homingActive,
+        hasReleasedHoming: projectile.hasReleasedHoming,
+        lockedTargetId: projectile.lockedTargetId,
       })),
       roundTimer: this.roundTimer,
       roundWins: [...this.roundWins],
@@ -3043,6 +3055,8 @@ export class Game {
     const actionHint =
       localCharacter?.id === "thief"
         ? "J attack, Shift dash, K steal, L throw dagger"
+        : localCharacter?.id === "fighter_character"
+          ? "J jab, K step, L heavy punch"
         : localCharacter?.id === "wizard"
           ? "J staff, K fireball, L missile, ; ice bolt"
           : "J attack, K skill1, L skill2";
@@ -3237,6 +3251,9 @@ function serializeCharacter(character) {
     castLockTicks: character.castLockTicks,
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+    dashStopOnEnd: character.dashStopOnEnd,
+    actionWeaponVisualId: character.actionWeaponVisualId,
+    actionWeaponVisualTicks: character.actionWeaponVisualTicks,
     abilities: { ...character.abilities },
     decoration: character.decoration ? { ...character.decoration } : null,
   };
@@ -3266,6 +3283,9 @@ function applyCharacterSnapshot(character, snapshot) {
   character.castLockTicks = snapshot.castLockTicks ?? 0;
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
+  character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
+  character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
+  character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
 }
 
 function serializeBox(box) {
@@ -3311,6 +3331,9 @@ function serializeCharacterSnapshot(character, map) {
     dropTimer: character.dropTimer,
     dashTimer: character.dashTimer,
     dashTicks: character.dashTicks,
+    dashStopOnEnd: character.dashStopOnEnd,
+    actionWeaponVisualId: character.actionWeaponVisualId,
+    actionWeaponVisualTicks: character.actionWeaponVisualTicks,
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
@@ -3344,6 +3367,9 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.dropTimer = snapshot.dropTimer;
   character.dashTimer = snapshot.dashTimer;
   character.dashTicks = snapshot.dashTicks ?? 0;
+  character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
+  character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
+  character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
   character.hitStun = snapshot.hitStun;
   character.hitFlash = snapshot.hitFlash;
   character.attackFlash = snapshot.attackFlash;
@@ -3405,6 +3431,9 @@ function copyCombatFields(entity) {
     pierce: entity.pierce,
     speed: entity.speed,
     homing: entity.homing ? { ...entity.homing } : null,
+    homingActive: entity.homingActive,
+    hasReleasedHoming: entity.hasReleasedHoming,
+    lockedTargetId: entity.lockedTargetId,
     projectileColor: entity.projectileColor,
     visualWeaponId: entity.visualWeaponId,
     excludePartNames: [...(entity.excludePartNames ?? [])],

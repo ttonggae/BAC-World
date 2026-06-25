@@ -223,21 +223,46 @@ function getTargetId(target) {
 
 function updateHoming(projectile, characters) {
   const homing = projectile.homing;
-  if (!homing || !(projectile.speed > 0)) return;
+  if (
+    !homing ||
+    projectile.homingActive === false ||
+    projectile.hasReleasedHoming ||
+    !(projectile.speed > 0)
+  ) {
+    return;
+  }
 
   const centerX = projectile.x + projectile.w / 2;
   const centerY = projectile.y + projectile.h / 2;
-  const rangeSquared = (homing.range ?? 0) ** 2;
-  let target = null;
-  let bestDistance = rangeSquared;
-  for (const character of characters) {
-    if (character === projectile.owner || !character.isAlive) continue;
-    const dx = character.x + character.w / 2 - centerX;
-    const dy = character.y + character.h / 2 - centerY;
-    const distance = dx * dx + dy * dy;
-    if (distance <= bestDistance) {
-      bestDistance = distance;
-      target = character;
+  let target =
+    projectile.lockedTargetId === null
+      ? null
+      : characters.find(
+          (character) =>
+            getTargetId(character) === projectile.lockedTargetId &&
+            character.isAlive,
+        );
+
+  if (projectile.lockedTargetId !== null && !target) {
+    releaseHoming(projectile);
+    return;
+  }
+
+  if (!target) {
+    const rangeSquared = (homing.range ?? 0) ** 2;
+    let bestDistance = rangeSquared;
+    for (const character of characters) {
+      if (character === projectile.owner || !character.isAlive) continue;
+      const dx = character.x + character.w / 2 - centerX;
+      const dy = character.y + character.h / 2 - centerY;
+      const distance = dx * dx + dy * dy;
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        target = character;
+      }
+    }
+    if (target) {
+      projectile.lockedTargetId = getTargetId(target);
     }
   }
   if (!target) return;
@@ -245,6 +270,10 @@ function updateHoming(projectile, characters) {
   const dx = target.x + target.w / 2 - centerX;
   const dy = target.y + target.h / 2 - centerY;
   const length = Math.hypot(dx, dy) || 1;
+  if (length <= (homing.releaseDistance ?? 0)) {
+    releaseHoming(projectile);
+    return;
+  }
   const desiredX = (dx / length) * projectile.speed;
   const desiredY = (dy / length) * projectile.speed;
   const factor = Math.max(0, Math.min(1, homing.factor ?? 0.1));
@@ -253,6 +282,11 @@ function updateHoming(projectile, characters) {
   const blendedLength = Math.hypot(blendedX, blendedY) || 1;
   projectile.vx = (blendedX / blendedLength) * projectile.speed;
   projectile.vy = (blendedY / blendedLength) * projectile.speed;
+}
+
+function releaseHoming(projectile) {
+  projectile.homingActive = false;
+  projectile.hasReleasedHoming = true;
 }
 
 function applyEffectHitReaction(hitbox, target, knockback, hpStolen) {

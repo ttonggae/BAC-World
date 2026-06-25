@@ -3,8 +3,9 @@ export const WIZARD_CHARACTER_DATA = {
     id: "wizard",
     name: "Wizard",
     description: "Low-health ranged controller using fire, homing magic, and ice.",
+    // Keep the existing gameplay AABB; the exported 38x42 body is visual-only.
     size: { w: 42, h: 46 },
-    color: "#7257c9",
+    color: "#646464",
     defaultWeaponId: "magic_staff",
     defaultActionId: "basic_attack",
     actionSlots: {
@@ -26,15 +27,17 @@ export const WIZARD_CHARACTER_DATA = {
     },
     visual: {
       parts: [
-        { type: "rect", name: "body", x: 5, y: 12, w: 32, h: 30, fill: "#7257c9", opacity: 1 },
-        { type: "rect", name: "robe_upper", x: 2, y: 27, w: 38, h: 12, fill: "#5943a8", opacity: 1 },
-        { type: "rect", name: "robe_lower", x: 0, y: 39, w: 42, h: 7, fill: "#463486", opacity: 1 },
-        { type: "rect", name: "hat_brim", x: 0, y: 10, w: 42, h: 6, fill: "#39296f", opacity: 1 },
-        { type: "rect", name: "hat_body", x: 9, y: 1, w: 27, h: 11, fill: "#5943a8", opacity: 1 },
-        { type: "rect", name: "hat_tip", x: 27, y: -5, w: 9, h: 8, fill: "#39296f", opacity: 1 },
-        { type: "rect", name: "gem", x: 18, y: 29, w: 7, h: 7, fill: "#69d9ff", opacity: 1 },
-        { type: "rect", name: "eye_left", x: 12, y: 20, w: 4, h: 4, fill: "#f6f1ff", opacity: 1 },
-        { type: "rect", name: "eye_right", x: 27, y: 20, w: 4, h: 4, fill: "#f6f1ff", opacity: 1 },
+        { type: "rect", name: "body", x: 0, y: 0, w: 38, h: 42, radius: 0, fill: "#ffd39b", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "robe_back_wide", x: -11, y: 6, w: 56, h: 10, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "robe_back_upper", x: -5, y: 0, w: 48, h: 8, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_brim_base", x: 3, y: -5, w: 38, h: 8, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_body_low", x: 6, y: -11, w: 33, h: 9, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_body_mid", x: 11, y: -15, w: 26, h: 9, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_tip_base", x: 10, y: -16, w: 38, h: 6, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_tip_long", x: 24, y: -20, w: 37, h: 6, radius: 0, fill: "#646464", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "hat_gem_yellow", x: 56, y: -17, w: 8, h: 12, radius: 0, fill: "#ffea00", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "eye_left_green", x: 10, y: 18, w: 4, h: 9, radius: 0, fill: "#1e765c", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "eye_right_red", x: 22, y: 18, w: 4, h: 9, radius: 0, fill: "#b92413", stroke: null, lineWidth: 0, opacity: 1 },
       ],
     },
   },
@@ -43,14 +46,77 @@ export const WIZARD_CHARACTER_DATA = {
 export const WIZARD_WEAPON_DATA = {
   magic_staff: {
     id: "magic_staff",
-    name: "Magic Staff",
-    anchor: { x: 36, y: 17 },
+    name: "마법 지팡이",
+    anchor: { x: 0, y: 0 },
     layer: "front",
     visual: {
       parts: [
-        { type: "rect", name: "staff_handle", x: -2, y: 0, w: 4, h: 34, fill: "#6e451f", opacity: 1 },
-        { type: "rect", name: "staff_guard", x: -6, y: 2, w: 12, h: 4, fill: "#d4b45e", opacity: 1 },
-        { type: "rect", name: "staff_gem", x: -5, y: -7, w: 10, h: 10, fill: "#69d9ff", stroke: "#e8fbff", lineWidth: 1, opacity: 1 },
+        { type: "rect", name: "staff_body", x: -4, y: -8, w: 4, h: 60, radius: 0, fill: "#9a3f0e", stroke: null, lineWidth: 0, opacity: 1 },
+      ],
+    },
+  },
+  basic_attack_1: {
+    id: "basic_attack_1",
+    name: "basicAttack 1",
+    anchor: { x: 0, y: 0 },
+    layer: "front",
+    preservePartOffsets: true,
+    visual: {
+      parts: [
+        { type: "rect", name: "staff_swing_vertical", x: -2, y: -28, w: 3, h: 76, radius: 0, fill: "#aa6b13", stroke: null, lineWidth: 0, opacity: 1 },
+      ],
+    },
+  },
+  basic_attack2: {
+    id: "basic_attack2",
+    name: "basicAttack2",
+    anchor: { x: 0, y: 0 },
+    layer: "front",
+    preservePartOffsets: true,
+    visual: {
+      parts: [
+        { type: "rect", name: "staff_swing_horizontal", x: -60, y: 34, w: 81, h: 4, radius: 0, fill: "#8e4c01", stroke: null, lineWidth: 0, opacity: 1 },
+      ],
+    },
+  },
+  fireball: {
+    id: "fireball",
+    name: "fireball",
+    anchor: { x: 0, y: 0 },
+    layer: "front",
+    preservePartOffsets: true,
+    visual: {
+      parts: [
+        { type: "rect", name: "fireball_core_orange", x: -34, y: 24, w: 15, h: 16, radius: 29, fill: "#c25a14", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "fireball_flame_red_1", x: -28, y: 22, w: 18, h: 11, radius: 12, fill: "#9f0909", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "fireball_flame_dark", x: -25, y: 27, w: 19, h: 7, radius: 16, fill: "#7c0404", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "fireball_flame_red_2", x: -26, y: 32, w: 21, h: 9, radius: 14, fill: "#b02727", stroke: null, lineWidth: 0, opacity: 1 },
+      ],
+    },
+  },
+  magic_missile: {
+    id: "magic_missile",
+    name: "magic_missile",
+    anchor: { x: 0, y: 0 },
+    layer: "front",
+    preservePartOffsets: true,
+    visual: {
+      parts: [
+        { type: "rect", name: "missile_core_purple", x: -35, y: 28, w: 26, h: 8, radius: 12, fill: "#80159e", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "missile_top_dark", x: -30, y: 25, w: 27, h: 6, radius: 0, fill: "#651476", stroke: null, lineWidth: 0, opacity: 1 },
+        { type: "rect", name: "missile_trail_light", x: -30, y: 34, w: 28, h: 5, radius: 21, fill: "#c05db3", stroke: null, lineWidth: 0, opacity: 1 },
+      ],
+    },
+  },
+  ice_bolt: {
+    id: "ice_bolt",
+    name: "ice_bolt",
+    anchor: { x: 0, y: 0 },
+    layer: "front",
+    preservePartOffsets: true,
+    visual: {
+      parts: [
+        { type: "rect", name: "ice_bolt_line", x: -31, y: 32, w: 26, h: 3, radius: 0, fill: "#03b2bf", stroke: null, lineWidth: 0, opacity: 1 },
       ],
     },
   },
@@ -70,6 +136,8 @@ export const WIZARD_ACTION_DATA = {
     recovery: 14,
     cooldown: 0,
     lockActions: true,
+    startupWeaponVisualId: "basic_attack_1",
+    activeWeaponVisualId: "basic_attack2",
     hitboxes: [{ type: "rect", name: "staff_jab", x: 32, y: 10, w: 48, h: 22 }],
     knockback: { x: 280, y: -110 },
   },
@@ -94,6 +162,7 @@ export const WIZARD_ACTION_DATA = {
       destroyOnHit: true,
       destroyOnWall: true,
       color: "#ff773d",
+      visualWeaponId: "fireball",
     },
     effects: [
       {
@@ -116,11 +185,11 @@ export const WIZARD_ACTION_DATA = {
     input: "L",
     slot: "skill2",
     damage: 6,
-    staminaCost: 12,
+    staminaCost: 24,
     startup: 8,
     active: 150,
     recovery: 12,
-    cooldown: 60,
+    cooldown: 300,
     lockActions: true,
     projectile: {
       spawn: { x: 34, y: 18 },
@@ -130,7 +199,8 @@ export const WIZARD_ACTION_DATA = {
       destroyOnHit: true,
       destroyOnWall: true,
       color: "#bda7ff",
-      homing: { range: 430, factor: 0.12 },
+      visualWeaponId: "magic_missile",
+      homing: { range: 430, factor: 0.12, releaseDistance: 100 },
     },
     hitboxes: [{ type: "rect", name: "missile_body", x: 0, y: 0, w: 20, h: 14 }],
     knockback: { x: 180, y: -55 },
@@ -156,6 +226,7 @@ export const WIZARD_ACTION_DATA = {
       destroyOnHit: true,
       destroyOnWall: true,
       color: "#72ddff",
+      visualWeaponId: "ice_bolt",
     },
     effects: [
       {

@@ -331,9 +331,14 @@ export class CanvasRenderer {
     }
 
     const isHitFlash = character.hitFlash > 0;
-    const weapon = character.defaultWeaponId
-      ? EDITOR_WEAPONS[character.defaultWeaponId]
+    const pendingAbility = character.pendingAbility
+      ? ABILITIES[character.pendingAbility.abilityId]
       : null;
+    const visualWeaponId =
+      pendingAbility?.startupWeaponVisualId ??
+      character.actionWeaponVisualId ??
+      character.defaultWeaponId;
+    const weapon = visualWeaponId ? EDITOR_WEAPONS[visualWeaponId] : null;
     if (weapon?.layer === "back") this.drawCharacterWeapon(weapon);
 
     if (character.visual?.parts?.length) {
@@ -392,8 +397,12 @@ export class CanvasRenderer {
     const parts = weapon.visual.parts.filter((part) => !excluded.has(part.name));
     if (parts.length === 0) return;
 
-    const minX = Math.min(...parts.map((part) => part.x));
-    const minY = Math.min(...parts.map((part) => part.y));
+    const minX = weapon.preservePartOffsets
+      ? 0
+      : Math.min(...parts.map((part) => part.x));
+    const minY = weapon.preservePartOffsets
+      ? 0
+      : Math.min(...parts.map((part) => part.y));
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(projectile.x, projectile.y);

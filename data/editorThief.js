@@ -112,7 +112,7 @@ export const EDITOR_ACTION_DATA = {
     description: "단검을 앞으로 던져 피해를 입힌다. 투사체는 손을 제외한 단검 형태로 표시된다.",
     damage: 15,
     staminaCost: 15,
-    startup: 12,
+    startup: 6,
     active: 180,
     recovery: 6,
     cooldown: 180,

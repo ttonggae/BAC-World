@@ -82,8 +82,11 @@ export class OfflineMatch {
     character.skillFlash = 0;
     character.guardFlash = 0;
     character.weaponFlash = 0;
+    character.actionWeaponVisualId = null;
+    character.actionWeaponVisualTicks = 0;
     character.dashTimer = 0;
     character.dashTicks = 0;
+    character.dashStopOnEnd = false;
     character.dummyRespawnTimer = 0;
   }
 

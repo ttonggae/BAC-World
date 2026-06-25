@@ -70,12 +70,15 @@ export class CharacterBase {
     this.groundPlatform = null;
     this.dashTimer = 0;
     this.dashTicks = 0;
+    this.dashStopOnEnd = false;
     this.hitStun = 0;
     this.hitFlash = 0;
     this.attackFlash = 0;
     this.skillFlash = 0;
     this.guardFlash = 0;
     this.weaponFlash = 0;
+    this.actionWeaponVisualId = null;
+    this.actionWeaponVisualTicks = 0;
   }
 
   get bounds() {
@@ -94,9 +97,25 @@ export class CharacterBase {
     this.skillFlash = Math.max(0, this.skillFlash - dt);
     this.guardFlash = Math.max(0, this.guardFlash - dt);
     this.weaponFlash = Math.max(0, this.weaponFlash - dt);
+    this.actionWeaponVisualTicks = Math.max(
+      0,
+      this.actionWeaponVisualTicks - 1,
+    );
+    if (this.actionWeaponVisualTicks === 0) {
+      this.actionWeaponVisualId = null;
+    }
     this.staminaFlash = Math.max(0, this.staminaFlash - dt);
     this.dashTimer = Math.max(0, this.dashTimer - dt);
+    const previousDashTicks = this.dashTicks;
     this.dashTicks = Math.max(0, this.dashTicks - 1);
+    if (
+      previousDashTicks > 0 &&
+      this.dashTicks === 0 &&
+      this.dashStopOnEnd
+    ) {
+      this.vx = 0;
+      this.dashStopOnEnd = false;
+    }
     this.castLockTicks = Math.max(0, this.castLockTicks - 1);
     this.invincibleTicks = Math.max(0, this.invincibleTicks - 1);
     this.hurtboxDisabledTicks = Math.max(0, this.hurtboxDisabledTicks - 1);
@@ -107,7 +126,7 @@ export class CharacterBase {
     updateAbilityState(this, dt, context);
     if (!this.isAlive) return;
 
-    if (this.hitStun === 0) {
+    if (this.hitStun === 0 && !this.isActionRestricted()) {
       const canControlMovement =
         this.dashTimer === 0 &&
         this.dashTicks === 0 &&
@@ -195,7 +214,9 @@ export class CharacterBase {
     const key = `${config.statusId}:${sourceId}`;
     const next = {
       ...config,
-      remainingTicks: config.durationTicks ?? 0,
+      // Statuses are applied after character updates, so keep one boundary tick
+      // to provide the full authored duration on subsequent simulation ticks.
+      remainingTicks: (config.durationTicks ?? 0) + 1,
       tickTimer: config.tickInterval ?? 0,
       ticksApplied: 0,
     };
@@ -236,7 +257,15 @@ export class CharacterBase {
 
   isMovementRestricted() {
     return Object.values(this.activeStatuses).some(
-      (status) => status.statusId === "root" && status.remainingTicks > 0,
+      (status) =>
+        (status.statusId === "root" || status.statusId === "stun") &&
+        status.remainingTicks > 0,
+    );
+  }
+
+  isActionRestricted() {
+    return Object.values(this.activeStatuses).some(
+      (status) => status.statusId === "stun" && status.remainingTicks > 0,
     );
   }
 
@@ -264,6 +293,15 @@ export class CharacterBase {
   }
 
   updateStamina(dt) {
+    if (
+      Object.values(this.activeStatuses).some(
+        (status) =>
+          status.disableStaminaRegen && status.remainingTicks > 0,
+      )
+    ) {
+      return;
+    }
+
     if (this.staminaRegenTimer > 0) {
       this.staminaRegenTimer = Math.max(0, this.staminaRegenTimer - dt);
       return;

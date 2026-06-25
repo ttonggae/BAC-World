@@ -4,7 +4,7 @@ Browser-based 2D casual ability fighting prototype.
 
 ## Version
 
-Current version: **테스트 0.2**
+Current version: **테스트 0.3**
 
 The version is changed only when the project owner explicitly requests a GitHub upload.
 
@@ -49,6 +49,7 @@ The version is changed only when the project owner explicitly requests a GitHub 
 - `speedy`: less HP, more stamina, faster movement, lower weight
 - `thief`: low-HP close-range utility fighter with steal and dagger actions
 - `wizard`: low-HP ranged controller with high stamina and elemental projectiles
+- `fighter_character`: beginner melee pressure fighter with jab, step, and heavy punch
 
 ## Run
 

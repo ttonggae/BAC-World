@@ -31,6 +31,13 @@ export function useAbility(player, abilityId, context) {
 
   applyAbilityMovement(player, ability);
   pushUseEffect(player, ability, context);
+  if (ability.activeWeaponVisualId) {
+    player.actionWeaponVisualId = ability.activeWeaponVisualId;
+    player.actionWeaponVisualTicks =
+      (ability.startupTicks ?? 0) +
+      (ability.activeTicks ?? 0) +
+      (ability.recoveryTicks ?? 0);
+  }
   player.cooldowns[abilityId] = ability.cooldown ?? 0;
   if (ability.editorAction) {
     player.cooldownTicks[abilityId] = ability.cooldownTicks ?? 0;
@@ -90,6 +97,7 @@ function applyMovementAbility(player, ability) {
   player.dashTimer = ability.editorAction ? 0 : moveTime;
   if (ability.editorAction) {
     player.dashTicks = movement?.duration ?? 0;
+    player.dashStopOnEnd = Boolean(movement?.stopOnEnd);
   }
   if ((ability.invincibleTicks ?? 0) > 0) {
     player.invincibleTicks = ability.invincibleTicks;
@@ -304,6 +312,9 @@ function fireEditorProjectile(player, ability, context) {
     pierce: projectile.pierce,
     speed: projectile.speed,
     homing: projectile.homing ? { ...projectile.homing } : null,
+    homingActive: Boolean(projectile.homing),
+    hasReleasedHoming: false,
+    lockedTargetId: null,
     projectileColor: projectile.color ?? null,
     effects: ability.effects.map((effect) => ({ ...effect })),
     visualWeaponId: projectile.visualWeaponId,
