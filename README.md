@@ -4,7 +4,7 @@ Browser-based 2D casual ability fighting prototype.
 
 ## Version
 
-Current version: **테스트 0.7**
+Current version: **테스트 0.8**
 
 The version is changed only when the project owner explicitly requests a GitHub upload.
 

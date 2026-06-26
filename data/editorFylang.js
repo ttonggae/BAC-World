@@ -236,12 +236,12 @@ export const FYLANG_ACTION_DATA = {
       {
         type: "status",
         statusId: "stun",
-        durationTicks: 60,
+        durationTicks: 90,
         disableStaminaRegen: true,
         refreshRule: "replace",
       },
     ],
-    stunTicks: 60,
+    stunTicks: 90,
     knockback: { x: 230, y: -80 },
   },
   sword_shift: {
@@ -345,7 +345,7 @@ export const FYLANG_ACTION_DATA = {
     input: "Shift",
     slot: "movementSkill",
     damage: 10,
-    staminaCost: 20,
+    staminaCost: 10,
     startup: 0,
     active: 12,
     recovery: 6,
