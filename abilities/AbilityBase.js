@@ -2,6 +2,10 @@ import { ABILITIES } from "../data/abilities.js";
 
 export function updateAbilityState(player, dt, context) {
   updateCooldowns(player, dt);
+  if (player.isActionRestricted?.()) {
+    player.pendingAbility = null;
+    return;
+  }
   updatePendingAbility(player, dt, context);
 }
 
@@ -11,6 +15,10 @@ export function useAbility(player, abilityId, context) {
   const ability = ABILITIES[abilityId];
   if (!ability) {
     throw new Error(`Unknown ability: ${abilityId}`);
+  }
+
+  if (player.isActionRestricted?.()) {
+    return false;
   }
 
   if ((player.castLockTicks ?? 0) > 0) {

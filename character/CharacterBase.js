@@ -242,7 +242,24 @@ export class CharacterBase {
     this.activeStatuses[key] = next;
     if (config.statusId === "root") {
       this.vx = 0;
+    } else if (config.statusId === "stun") {
+      this.interruptActions();
     }
+  }
+
+  interruptActions() {
+    this.pendingAbility = null;
+    this.castLockTicks = 0;
+    this.dashTimer = 0;
+    this.dashTicks = 0;
+    this.dashStopOnEnd = false;
+    this.vx = 0;
+    this.actionWeaponVisualId = null;
+    this.actionWeaponVisualTicks = 0;
+    this.attackFlash = 0;
+    this.skillFlash = 0;
+    this.guardFlash = 0;
+    this.weaponFlash = 0;
   }
 
   updateStatuses() {

@@ -388,6 +388,10 @@ export class CanvasRenderer {
       : null;
     if (stanceIndicator) this.drawOtherImage(stanceIndicator);
 
+    if (isStunned(character)) {
+      this.drawStunIndicator(character);
+    }
+
     if (isHitFlash) {
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = "#fff4b0";
@@ -418,6 +422,24 @@ export class CanvasRenderer {
       this.drawLance(character);
     }
 
+    ctx.restore();
+  }
+
+  drawStunIndicator(character) {
+    const ctx = this.ctx;
+    const centerX = character.w / 2;
+    const y = -12;
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    ctx.strokeStyle = "#f8d24b";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(centerX, y, 17, 6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#fff1a8";
+    drawDiamond(ctx, centerX - 17, y - 1, 4);
+    drawDiamond(ctx, centerX, y - 7, 5);
+    drawDiamond(ctx, centerX + 17, y - 1, 4);
     ctx.restore();
   }
 
@@ -806,6 +828,22 @@ function fitLabel(label, maxWidth) {
   const limit = Math.max(5, Math.floor(maxWidth / 7));
   if (label.length <= limit) return label;
   return `${label.slice(0, Math.max(1, limit - 1))}…`;
+}
+
+function isStunned(character) {
+  return Object.values(character.activeStatuses ?? {}).some(
+    (status) => status.statusId === "stun" && status.remainingTicks > 0,
+  );
+}
+
+function drawDiamond(ctx, x, y, size) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - size);
+  ctx.lineTo(x + size, y);
+  ctx.lineTo(x, y + size);
+  ctx.lineTo(x - size, y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function getHitboxColor(type) {
