@@ -236,12 +236,12 @@ export const FYLANG_ACTION_DATA = {
       {
         type: "status",
         statusId: "stun",
-        durationTicks: 90,
+        durationTicks: 60,
         disableStaminaRegen: true,
         refreshRule: "replace",
       },
     ],
-    stunTicks: 90,
+    stunTicks: 60,
     knockback: { x: 230, y: -80 },
   },
   sword_shift: {
