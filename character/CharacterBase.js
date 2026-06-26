@@ -22,6 +22,7 @@ export class CharacterBase {
     this.color = data.color;
     this.controls = controls;
     this.abilities = { ...data.abilities };
+    this.actionInputs = { ...(data.actionInputs ?? {}) };
     this.cooldowns = {};
     this.cooldownTicks = {};
     this.buffs = {};
@@ -63,8 +64,21 @@ export class CharacterBase {
     this.decoration = data.decoration ?? null;
     this.visual = data.visual ?? null;
     this.defaultWeaponId = data.defaultWeaponId ?? null;
+    this.passiveWeaponIds = [...(data.passiveWeaponIds ?? [])];
     this.actionIds = [...(data.actionIds ?? [])];
     this.extraActionIds = [...(data.extraActionIds ?? [])];
+    this.stance = data.stance ? clonePlainObject(data.stance) : null;
+    this.currentStanceMode = this.stance?.defaultMode ?? null;
+    this.modeSwapBonusBasicAttackReady = false;
+    this.modeSwapBonusActionId = null;
+    this.modeSwapBonusDamage = 0;
+    this.currentStanceIndicatorId = null;
+    if (this.stance?.modes?.[this.currentStanceMode]) {
+      const mode = this.stance.modes[this.currentStanceMode];
+      this.abilities = { ...this.abilities, ...mode.actionSlots };
+      this.defaultWeaponId = mode.weaponId ?? this.defaultWeaponId;
+      this.currentStanceIndicatorId = mode.indicatorId ?? null;
+    }
     this.onGround = false;
     this.dropTimer = 0;
     this.groundPlatform = null;
@@ -193,6 +207,10 @@ export class CharacterBase {
 
     if (this.controls.extra && input.wasPressed(this.controls.extra)) {
       useAbility(this, this.abilities.extra, context);
+    }
+
+    if (this.controls.special && input.wasPressed(this.controls.special)) {
+      useAbility(this, this.abilities.special, context);
     }
   }
 
@@ -444,4 +462,8 @@ function moveToward(value, target, amount) {
 
 function overlaps(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function clonePlainObject(value) {
+  return JSON.parse(JSON.stringify(value));
 }

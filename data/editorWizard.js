@@ -84,7 +84,7 @@ export const WIZARD_WEAPON_DATA = {
     name: "fireball",
     anchor: { x: 0, y: 0 },
     layer: "front",
-    preservePartOffsets: true,
+    preservePartOffsets: false,
     visual: {
       parts: [
         { type: "rect", name: "fireball_core_orange", x: -34, y: 24, w: 15, h: 16, radius: 29, fill: "#c25a14", stroke: null, lineWidth: 0, opacity: 1 },
@@ -99,7 +99,7 @@ export const WIZARD_WEAPON_DATA = {
     name: "magic_missile",
     anchor: { x: 0, y: 0 },
     layer: "front",
-    preservePartOffsets: true,
+    preservePartOffsets: false,
     visual: {
       parts: [
         { type: "rect", name: "missile_core_purple", x: -35, y: 28, w: 26, h: 8, radius: 12, fill: "#80159e", stroke: null, lineWidth: 0, opacity: 1 },
@@ -113,7 +113,7 @@ export const WIZARD_WEAPON_DATA = {
     name: "ice_bolt",
     anchor: { x: 0, y: 0 },
     layer: "front",
-    preservePartOffsets: true,
+    preservePartOffsets: false,
     visual: {
       parts: [
         { type: "rect", name: "ice_bolt_line", x: -31, y: 32, w: 26, h: 3, radius: 0, fill: "#03b2bf", stroke: null, lineWidth: 0, opacity: 1 },
@@ -130,7 +130,7 @@ export const WIZARD_ACTION_DATA = {
     input: "J",
     slot: "basicAttack",
     damage: 8,
-    staminaCost: 3,
+    staminaCost: 9,
     startup: 6,
     active: 5,
     recovery: 14,
@@ -148,7 +148,7 @@ export const WIZARD_ACTION_DATA = {
     input: "K",
     slot: "skill1",
     damage: 16,
-    staminaCost: 18,
+    staminaCost: 27,
     startup: 14,
     active: 180,
     recovery: 18,
@@ -175,7 +175,7 @@ export const WIZARD_ACTION_DATA = {
         refreshRule: "replace",
       },
     ],
-    hitboxes: [{ type: "rect", name: "fireball_body", x: 0, y: 0, w: 34, h: 26 }],
+    hitboxes: [{ type: "rect", name: "fireball_body", x: 0, y: 0, w: 29, h: 19 }],
     knockback: { x: 330, y: -100 },
   },
   magic_missile: {
@@ -185,7 +185,7 @@ export const WIZARD_ACTION_DATA = {
     input: "L",
     slot: "skill2",
     damage: 6,
-    staminaCost: 24,
+    staminaCost: 36,
     startup: 8,
     active: 150,
     recovery: 12,
@@ -202,7 +202,7 @@ export const WIZARD_ACTION_DATA = {
       visualWeaponId: "magic_missile",
       homing: { range: 430, factor: 0.12, releaseDistance: 100 },
     },
-    hitboxes: [{ type: "rect", name: "missile_body", x: 0, y: 0, w: 20, h: 14 }],
+    hitboxes: [{ type: "rect", name: "missile_body", x: 0, y: 0, w: 33, h: 14 }],
     knockback: { x: 180, y: -55 },
   },
   ice_bolt: {
@@ -212,7 +212,7 @@ export const WIZARD_ACTION_DATA = {
     input: ";",
     slot: "extra",
     damage: 12,
-    staminaCost: 22,
+    staminaCost: 66,
     startup: 10,
     active: 150,
     recovery: 16,
@@ -236,7 +236,7 @@ export const WIZARD_ACTION_DATA = {
         refreshRule: "replace",
       },
     ],
-    hitboxes: [{ type: "rect", name: "ice_bolt_body", x: 0, y: 0, w: 28, h: 12 }],
+    hitboxes: [{ type: "rect", name: "ice_bolt_body", x: 0, y: 0, w: 26, h: 3 }],
     knockback: { x: 210, y: -70 },
   },
 };

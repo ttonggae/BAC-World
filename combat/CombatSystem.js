@@ -4,6 +4,7 @@ export class CombatSystem {
   constructor() {
     this.hitboxes = [];
     this.projectiles = [];
+    this.areas = [];
     this.hitEvents = [];
     this.lastHit = null;
   }
@@ -31,11 +32,25 @@ export class CombatSystem {
     });
   }
 
+  spawnArea(area) {
+    this.areas.push({
+      ...area,
+      remainingTicks: area.durationTicks,
+      elapsedTicks: 0,
+      lastDamageTickByTargetId:
+        area.lastDamageTickByTargetId instanceof Map
+          ? area.lastDamageTickByTargetId
+          : new Map(),
+    });
+  }
+
   update(dt, characters, map) {
     this.lastHit = null;
+    this.updateAreas(characters);
     this.updateProjectiles(dt, characters, map);
 
     for (const hitbox of this.hitboxes) {
+      updateFollowHitbox(hitbox);
       if (Number.isInteger(hitbox.remainingTicks)) {
         hitbox.remainingTicks -= 1;
         hitbox.remaining = hitbox.remainingTicks / (hitbox.tickRate ?? 60);
@@ -76,6 +91,38 @@ export class CombatSystem {
         ? hitbox.remainingTicks > 0
         : hitbox.remaining > 0,
     );
+  }
+
+  updateAreas(characters) {
+    for (const area of this.areas) {
+      for (const target of characters) {
+        const targetId = getTargetId(target);
+        if (
+          target === area.owner ||
+          !target.isAlive ||
+          target.isInvincible ||
+          target.isHurtboxDisabled ||
+          !area.hitboxes.some((box) => intersects(box, target.bounds))
+        ) {
+          continue;
+        }
+        const lastTick = area.lastDamageTickByTargetId.get(targetId);
+        if (
+          Number.isInteger(lastTick) &&
+          area.elapsedTicks - lastTick < area.damageIntervalTicks
+        ) {
+          continue;
+        }
+        const damage = target.takeHit(area);
+        area.lastDamageTickByTargetId.set(targetId, area.elapsedTicks);
+        const hitEvent = createHitEvent(area, target, damage);
+        this.hitEvents.push(hitEvent);
+        this.lastHit = { attacker: area.owner, target, hitEvent };
+      }
+      area.elapsedTicks += 1;
+      area.remainingTicks -= 1;
+    }
+    this.areas = this.areas.filter((area) => area.remainingTicks > 0);
   }
 
   updateProjectiles(dt, characters, map) {
@@ -200,6 +247,11 @@ function applyHitEffects(hitbox, target) {
       owner.health = Math.min(owner.maxHealth, owner.health + amount);
       hpStolen += amount;
       hpRecovered += owner.health - before;
+    } else if (effect.type === "recoverStamina") {
+      const amount = Math.max(0, effect.maxAmount ?? 0);
+      const before = owner.stamina;
+      owner.stamina = Math.min(owner.maxStamina, owner.stamina + amount);
+      staminaRecovered += owner.stamina - before;
     } else if (effect.type === "status" && effect.statusId) {
       target.addStatus({
         ...effect,
@@ -219,6 +271,17 @@ function applyHitEffects(hitbox, target) {
 
 function getTargetId(target) {
   return Number.isInteger(target.playerIndex) ? target.playerIndex : target.id;
+}
+
+function updateFollowHitbox(hitbox) {
+  if (!hitbox.followOwner || !hitbox.owner || !hitbox.sourceHitbox) return;
+  const source = hitbox.sourceHitbox;
+  const direction = hitbox.sourceFacing ?? hitbox.owner.facing;
+  hitbox.x =
+    direction > 0
+      ? hitbox.owner.x + source.x
+      : hitbox.owner.x + hitbox.owner.w - source.x - source.w;
+  hitbox.y = hitbox.owner.y + source.y;
 }
 
 function updateHoming(projectile, characters) {

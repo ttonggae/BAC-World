@@ -35,6 +35,7 @@ const P1_CONTROLS = {
   skill2: "KeyL",
   movementSkill: "ShiftLeft",
   extra: "Semicolon",
+  special: "KeyN",
 };
 
 const P2_CONTROLS = {
@@ -47,6 +48,7 @@ const P2_CONTROLS = {
   skill2: "KeyL",
   movementSkill: "ShiftRight",
   extra: "Semicolon",
+  special: "KeyN",
 };
 
 const ONLINE_P1_CONTROLS = {
@@ -59,6 +61,7 @@ const ONLINE_P1_CONTROLS = {
   skill2: "OnlineP1Skill2",
   movementSkill: "OnlineP1MovementSkill",
   extra: "OnlineP1Extra",
+  special: "OnlineP1Special",
 };
 
 const ONLINE_P2_CONTROLS = {
@@ -71,6 +74,7 @@ const ONLINE_P2_CONTROLS = {
   skill2: "OnlineP2Skill2",
   movementSkill: "OnlineP2MovementSkill",
   extra: "OnlineP2Extra",
+  special: "OnlineP2Special",
 };
 
 const MATCH_POINT = 2;
@@ -307,8 +311,14 @@ export class Game {
       mode: "pvp",
       map: this.map,
       players: [
-        { characterId: this.selectedP1Character, controls: P1_CONTROLS },
-        { characterId: this.selectedP2Character, controls: P2_CONTROLS },
+        {
+          characterId: this.selectedP1Character,
+          controls: getControlsForCharacter(P1_CONTROLS, this.selectedP1Character),
+        },
+        {
+          characterId: this.selectedP2Character,
+          controls: getControlsForCharacter(P2_CONTROLS, this.selectedP2Character),
+        },
       ],
     });
   }
@@ -320,7 +330,10 @@ export class Game {
       disableWinner: true,
       map: this.map,
       players: [
-        { characterId: this.selectedP1Character, controls: P1_CONTROLS },
+        {
+          characterId: this.selectedP1Character,
+          controls: getControlsForCharacter(P1_CONTROLS, this.selectedP1Character),
+        },
         { characterId: "basic", controls: {}, isDummy: true },
       ],
     });
@@ -1861,6 +1874,8 @@ export class Game {
           serializeCombatSnapshot(hitbox, this.match.characters)),
         projectiles: this.match.combat.projectiles.map((projectile) =>
           serializeCombatSnapshot(projectile, this.match.characters)),
+        areas: this.match.combat.areas.map((area) =>
+          serializeCombatSnapshot(area, this.match.characters)),
       },
       round: {
         phase: this.onlinePhase,
@@ -1895,6 +1910,8 @@ export class Game {
       restoreCombatSnapshot(hitbox, this.match.characters, sharedHitTargetSets));
     this.match.combat.projectiles = (snapshot.combat?.projectiles ?? []).map((projectile) =>
       restoreCombatSnapshot(projectile, this.match.characters, sharedHitTargetSets));
+    this.match.combat.areas = (snapshot.combat?.areas ?? []).map((area) =>
+      restoreCombatSnapshot(area, this.match.characters, sharedHitTargetSets));
     this.match.combat.hitEvents = [];
     this.match.visualEvents = [];
     this.onlineTick = snapshot.onlineTick;
@@ -1998,6 +2015,7 @@ export class Game {
   createOnlineChecksum(tick) {
     const characters = this.match?.characters ?? [];
     const projectiles = this.match?.combat.projectiles ?? [];
+    const areas = this.match?.combat.areas ?? [];
     const values = [
       tick,
       ...characters.flatMap((character) => [
@@ -2017,6 +2035,12 @@ export class Game {
         character.actionWeaponVisualTicks ?? 0,
         character.invincibleTicks ?? 0,
         character.hurtboxDisabledTicks ?? 0,
+        character.currentStanceMode ?? "",
+        character.defaultWeaponId ?? "",
+        character.currentStanceIndicatorId ?? "",
+        character.modeSwapBonusBasicAttackReady ? 1 : 0,
+        character.modeSwapBonusActionId ?? "",
+        character.modeSwapBonusDamage ?? 0,
         JSON.stringify(character.activeStatuses ?? {}),
         character.pendingAbility?.abilityId ?? "",
         ...Object.entries(character.cooldownTicks ?? {})
@@ -2035,6 +2059,13 @@ export class Game {
         projectile.hasReleasedHoming ? 1 : 0,
         projectile.lockedTargetId ?? "",
         this.match.characters.indexOf(projectile.owner),
+      ]),
+      areas.length,
+      ...areas.flatMap((area) => [
+        area.id ?? "",
+        area.remainingTicks ?? 0,
+        area.elapsedTicks ?? 0,
+        ...[...(area.lastDamageTickByTargetId ?? new Map()).entries()].flat(),
       ]),
       quantize(this.roundTimer),
       ...this.roundWins,
@@ -2060,6 +2091,12 @@ export class Game {
       actionWeaponVisualTicks: character.actionWeaponVisualTicks,
       invincibleTicks: character.invincibleTicks,
       hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+      currentStanceMode: character.currentStanceMode,
+      defaultWeaponId: character.defaultWeaponId,
+      currentStanceIndicatorId: character.currentStanceIndicatorId,
+      modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
+      modeSwapBonusActionId: character.modeSwapBonusActionId,
+      modeSwapBonusDamage: character.modeSwapBonusDamage,
       activeStatuses: clonePlainObject(character.activeStatuses),
       cooldownTicks: { ...character.cooldownTicks },
       pendingAbility: character.pendingAbility?.abilityId ?? null,
@@ -2078,6 +2115,14 @@ export class Game {
         homingActive: projectile.homingActive,
         hasReleasedHoming: projectile.hasReleasedHoming,
         lockedTargetId: projectile.lockedTargetId,
+      })),
+      areas: this.match.combat.areas.map((area) => ({
+        id: area.id,
+        remainingTicks: area.remainingTicks,
+        elapsedTicks: area.elapsedTicks,
+        lastDamageTickEntries: [
+          ...(area.lastDamageTickByTargetId ?? new Map()).entries(),
+        ],
       })),
       roundTimer: this.roundTimer,
       roundWins: [...this.roundWins],
@@ -2115,6 +2160,10 @@ export class Game {
   }
 
   captureLocalOnlineInput() {
+    const localCharacterId =
+      this.currentSession?.localSlot === "p2"
+        ? this.selectedP2Character
+        : this.selectedP1Character;
     return {
       left: this.input.isDown("KeyA"),
       right: this.input.isDown("KeyD"),
@@ -2123,9 +2172,12 @@ export class Game {
       attack: this.input.isDown("KeyJ"),
       skill1: this.input.isDown("KeyK"),
       skill2: this.input.isDown("KeyL"),
-      movementSkill:
-        this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
+      movementSkill: this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
       extra: this.input.isDown("Semicolon"),
+      special:
+        localCharacterId === "fylang_character"
+          ? this.input.isDown("Space")
+          : this.input.isDown("KeyN"),
     };
   }
 
@@ -2611,6 +2663,10 @@ export class Game {
       roundTimer: this.isPracticeLikeMode() ? null : this.roundTimer,
       roundWinner: this.roundWinner,
       matchWinner: this.matchWinner,
+      localPlayerIndex:
+        this.currentSession?.localSlot === "p2"
+          ? 1
+          : 0,
       centerText: this.getCenterText(),
       statusText: this.getStatusText(),
     };
@@ -2655,10 +2711,10 @@ export class Game {
   }
 
   getStatusText() {
-    if (this.gameState === "onlineConnectionLost") return "Esc room lobby";
+    if (this.gameState === "onlineConnectionLost") return "Connection Lost";
     if (this.gameState === "onlinePlaying") {
       if (this.onlinePhase === "roundOver") return "Next Round";
-      if (this.onlinePhase === "matchOver") return "Esc room lobby";
+      if (this.onlinePhase === "matchOver") return "Match Over";
       return "Online Mode / Local-first Rollback";
     }
     if (this.isPracticeLikeMode() && this.gameState === "playing") {
@@ -2669,7 +2725,7 @@ export class Game {
     if (this.gameState === "roundOver") {
       return this.roundWinner === null ? "Round Restart" : "Next Round";
     }
-    if (this.gameState === "matchOver") return "R rematch / Esc select";
+    if (this.gameState === "matchOver") return "Match Over";
     return "";
   }
 
@@ -2879,19 +2935,28 @@ export class Game {
     const skill = ABILITIES[character.abilities.skill1];
     const skill2 = ABILITIES[character.abilities.skill2];
     const extra = ABILITIES[character.abilities.extra];
+    const special = ABILITIES[character.abilities.special];
     const rows = [
       ["HP", character.stats.maxHp],
       ["Stamina", character.stats.maxStamina],
       ["Speed", character.stats.moveSpeed],
       ["Jump", character.stats.jumpPower],
-      ["J", basicAttack ? basicAttack.name : "None"],
+      [character.actionInputs?.basicAttack ?? "J", basicAttack ? basicAttack.name : "None"],
     ];
-    if (movementSkill) rows.push(["Shift", movementSkill.name]);
+    if (movementSkill) {
+      rows.push([
+        character.actionInputs?.movementSkill ?? "Shift",
+        movementSkill.name,
+      ]);
+    }
     rows.push(
-      ["K", skill ? skill.name : "None"],
-      ["L", skill2 ? skill2.name : "None"],
+      [character.actionInputs?.skill1 ?? "K", skill ? skill.name : "None"],
+      [character.actionInputs?.skill2 ?? "L", skill2 ? skill2.name : "None"],
     );
-    if (extra) rows.push([";", extra.name]);
+    if (extra) rows.push([character.actionInputs?.extra ?? ";", extra.name]);
+    if (special) {
+      rows.push([character.actionInputs?.special ?? "N", special.name]);
+    }
     return rows;
   }
 
@@ -2992,17 +3057,13 @@ export class Game {
     this.ui.preMatchPreview.classList.toggle("hidden", !isPreview);
     this.ui.onlineBattleReady.classList.toggle("hidden", !isOnlineBattleReady);
     this.ui.gameStage.classList.toggle("hidden", !isInMatch);
-    this.ui.controlsPanel.classList.toggle("hidden", !isInMatch);
-    this.ui.gameOverActions.classList.toggle(
-      "hidden",
-      this.gameState !== "matchOver" || this.isPracticeLikeMode(),
-    );
+    this.ui.controlsPanel.classList.add("hidden");
+    this.ui.gameOverActions.classList.add("hidden");
     this.ui.onlineDebugPanel.classList.toggle(
       "hidden",
       this.gameState !== "onlinePlaying" && this.gameState !== "onlineConnectionLost",
     );
     this.syncOnlineDebugText();
-    this.syncControlsText();
   }
 
   syncOnlineDebugText() {
@@ -3040,47 +3101,6 @@ export class Game {
     }
   }
 
-  syncControlsText() {
-    const p1 = CHARACTERS[this.selectedP1Character];
-    const p2 = this.isPracticeLikeMode()
-      ? { name: "Training Dummy" }
-      : CHARACTERS[this.selectedP2Character];
-    const labels = this.ui.controlsPanel.querySelectorAll("strong");
-    if (labels[0]) labels[0].textContent = `P1 ${p1.name}`;
-    if (labels[1]) labels[1].textContent = `P2 ${p2.name}`;
-    const hints = this.ui.controlsPanel.querySelectorAll("span");
-    const online = this.currentMode === "pvpRoom" || this.gameState === "onlinePlaying";
-    const localCharacter =
-      online && this.currentSession?.localSlot === "p2" ? p2 : p1;
-    const actionHint =
-      localCharacter?.id === "thief"
-        ? "J attack, Shift dash, K steal, L throw dagger"
-        : localCharacter?.id === "fighter_character"
-          ? "J jab, K step, L heavy punch"
-        : localCharacter?.id === "wizard"
-          ? "J staff, K fireball, L missile, ; ice bolt"
-          : "J attack, K skill1, L skill2";
-    if (hints[0]) hints[0].textContent = online
-      ? `Local player: A/D move, W jump, S drop, ${actionHint}`
-      : `A/D move, W jump, S drop, ${actionHint}`;
-    if (hints[1]) {
-      hints[1].textContent = online
-        ? "Both players simulate predicted P2P inputs"
-        : this.isPracticeLikeMode()
-        ? "Dummy does not move or attack"
-        : "Left/Right move, Up jump, Down drop, / attack, K skill1, L skill2";
-    }
-    if (hints[2]) hints[2].textContent = online
-      ? `Rollback input delay: ${this.onlineInputDelayTicks} tick(s)`
-      : this.isPracticeLikeMode()
-      ? "R reset practice"
-      : "R rematch after match";
-    if (hints[3]) hints[3].textContent = online
-      ? "Esc after match/lost connection"
-      : this.isPracticeLikeMode()
-      ? "Esc back"
-      : "Esc after match";
-  }
 }
 
 function createEmptyOnlineInput() {
@@ -3094,6 +3114,7 @@ function createEmptyOnlineInput() {
     skill2: false,
     movementSkill: false,
     extra: false,
+    special: false,
   };
 }
 
@@ -3133,6 +3154,7 @@ function normalizeOnlineInput(input = {}) {
     skill2: Boolean(input.skill2),
     movementSkill: Boolean(input.movementSkill),
     extra: Boolean(input.extra),
+    special: Boolean(input.special),
   };
 }
 
@@ -3190,6 +3212,7 @@ function addMappedInput(target, input, controls) {
   if (input.skill2) target.add(controls.skill2);
   if (input.movementSkill && controls.movementSkill) target.add(controls.movementSkill);
   if (input.extra && controls.extra) target.add(controls.extra);
+  if (input.special && controls.special) target.add(controls.special);
 }
 
 function cloneOnlineInput(input = {}) {
@@ -3208,8 +3231,19 @@ function inputsEqual(a, b) {
     left.skill1 === right.skill1 &&
     left.skill2 === right.skill2 &&
     left.movementSkill === right.movementSkill &&
-    left.extra === right.extra
+    left.extra === right.extra &&
+    left.special === right.special
   );
+}
+
+function getControlsForCharacter(baseControls, characterId) {
+  if (characterId === "fylang_character") {
+    return {
+      ...baseControls,
+      special: "Space",
+    };
+  }
+  return { ...baseControls };
 }
 
 function formatInputSummary(input) {
@@ -3255,6 +3289,14 @@ function serializeCharacter(character) {
     actionWeaponVisualId: character.actionWeaponVisualId,
     actionWeaponVisualTicks: character.actionWeaponVisualTicks,
     abilities: { ...character.abilities },
+    actionInputs: { ...(character.actionInputs ?? {}) },
+    defaultWeaponId: character.defaultWeaponId,
+    passiveWeaponIds: [...(character.passiveWeaponIds ?? [])],
+    currentStanceMode: character.currentStanceMode,
+    currentStanceIndicatorId: character.currentStanceIndicatorId,
+    modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
+    modeSwapBonusActionId: character.modeSwapBonusActionId,
+    modeSwapBonusDamage: character.modeSwapBonusDamage,
     decoration: character.decoration ? { ...character.decoration } : null,
   };
 }
@@ -3286,6 +3328,18 @@ function applyCharacterSnapshot(character, snapshot) {
   character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
   character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
   character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
+  character.abilities = { ...(snapshot.abilities ?? character.abilities) };
+  character.actionInputs = { ...(snapshot.actionInputs ?? character.actionInputs) };
+  character.defaultWeaponId = snapshot.defaultWeaponId ?? character.defaultWeaponId;
+  character.passiveWeaponIds = [...(snapshot.passiveWeaponIds ?? character.passiveWeaponIds ?? [])];
+  character.currentStanceMode = snapshot.currentStanceMode ?? character.currentStanceMode;
+  character.currentStanceIndicatorId =
+    snapshot.currentStanceIndicatorId ?? character.currentStanceIndicatorId;
+  character.modeSwapBonusBasicAttackReady = Boolean(
+    snapshot.modeSwapBonusBasicAttackReady,
+  );
+  character.modeSwapBonusActionId = snapshot.modeSwapBonusActionId ?? null;
+  character.modeSwapBonusDamage = snapshot.modeSwapBonusDamage ?? 0;
 }
 
 function serializeBox(box) {
@@ -3334,6 +3388,14 @@ function serializeCharacterSnapshot(character, map) {
     dashStopOnEnd: character.dashStopOnEnd,
     actionWeaponVisualId: character.actionWeaponVisualId,
     actionWeaponVisualTicks: character.actionWeaponVisualTicks,
+    abilities: { ...character.abilities },
+    defaultWeaponId: character.defaultWeaponId,
+    passiveWeaponIds: [...(character.passiveWeaponIds ?? [])],
+    currentStanceMode: character.currentStanceMode,
+    currentStanceIndicatorId: character.currentStanceIndicatorId,
+    modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
+    modeSwapBonusActionId: character.modeSwapBonusActionId,
+    modeSwapBonusDamage: character.modeSwapBonusDamage,
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
@@ -3370,6 +3432,17 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
   character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
   character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
+  character.abilities = { ...(snapshot.abilities ?? character.abilities) };
+  character.defaultWeaponId = snapshot.defaultWeaponId ?? character.defaultWeaponId;
+  character.passiveWeaponIds = [...(snapshot.passiveWeaponIds ?? character.passiveWeaponIds ?? [])];
+  character.currentStanceMode = snapshot.currentStanceMode ?? character.currentStanceMode;
+  character.currentStanceIndicatorId =
+    snapshot.currentStanceIndicatorId ?? character.currentStanceIndicatorId;
+  character.modeSwapBonusBasicAttackReady = Boolean(
+    snapshot.modeSwapBonusBasicAttackReady,
+  );
+  character.modeSwapBonusActionId = snapshot.modeSwapBonusActionId ?? null;
+  character.modeSwapBonusDamage = snapshot.modeSwapBonusDamage ?? 0;
   character.hitStun = snapshot.hitStun;
   character.hitFlash = snapshot.hitFlash;
   character.attackFlash = snapshot.attackFlash;
@@ -3384,6 +3457,9 @@ function serializeCombatSnapshot(entity, characters) {
     ...copyCombatFields(entity),
     ownerIndex,
     hitTargetIds: [...(entity.hitTargetIds ?? [])],
+    lastDamageTickEntries: [
+      ...(entity.lastDamageTickByTargetId ?? new Map()).entries(),
+    ],
   };
 }
 
@@ -3398,6 +3474,9 @@ function restoreCombatSnapshot(snapshot, characters, sharedHitTargetSets = new M
     ...copyCombatFields(snapshot),
     owner: characters[snapshot.ownerIndex] ?? null,
     hitTargetIds,
+    lastDamageTickByTargetId: new Map(
+      snapshot.lastDamageTickEntries ?? [],
+    ),
   };
 }
 
@@ -3438,7 +3517,13 @@ function copyCombatFields(entity) {
     visualWeaponId: entity.visualWeaponId,
     excludePartNames: [...(entity.excludePartNames ?? [])],
     facing: entity.facing,
+    followOwner: Boolean(entity.followOwner),
+    sourceFacing: entity.sourceFacing,
+    sourceHitbox: entity.sourceHitbox ? { ...entity.sourceHitbox } : null,
     effects: (entity.effects ?? []).map((effect) => ({ ...effect })),
+    hitboxes: (entity.hitboxes ?? []).map((hitbox) => ({ ...hitbox })),
+    elapsedTicks: entity.elapsedTicks,
+    damageIntervalTicks: entity.damageIntervalTicks,
   };
 }
 

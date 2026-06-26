@@ -11,7 +11,7 @@ export const EDITOR_CHARACTER_DATA = {
   thief: {
     id: "thief",
     name: "도둑",
-    description: "빠른 이동과 단검 투척으로 견제하는 기동형 캐릭터",
+    description: "유명한 도둑? 그건 실력없는 도둑이지",
     size: { w: 42, h: 42 },
     color: "#646464",
     defaultWeaponId: "dagger",

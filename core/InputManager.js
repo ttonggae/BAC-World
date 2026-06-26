@@ -9,6 +9,8 @@ const GAME_KEYS = new Set([
   "ShiftLeft",
   "ShiftRight",
   "Semicolon",
+  "KeyN",
+  "Space",
   "KeyR",
   "Escape",
   "ArrowLeft",
@@ -52,14 +54,30 @@ export class InputManager {
   };
 
   handleKeyDown = (event) => {
+    if (isTextEntryTarget(event.target)) return;
     if (GAME_KEYS.has(event.code)) event.preventDefault();
     if (!this.down.has(event.code)) this.pressed.add(event.code);
     this.down.add(event.code);
   };
 
   handleKeyUp = (event) => {
+    if (isTextEntryTarget(event.target)) {
+      this.down.delete(event.code);
+      return;
+    }
     if (GAME_KEYS.has(event.code)) event.preventDefault();
     this.down.delete(event.code);
     this.released.add(event.code);
   };
+}
+
+function isTextEntryTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return (
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    target.isContentEditable
+  );
 }

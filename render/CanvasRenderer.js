@@ -1,5 +1,5 @@
 import { ABILITIES } from "../data/abilities.js";
-import { EDITOR_WEAPONS } from "../data/editorAdapter.js";
+import { EDITOR_OTHER_IMAGES, EDITOR_WEAPONS } from "../data/editorAdapter.js";
 
 function drawRectPath(ctx, part) {
   ctx.beginPath();
@@ -67,6 +67,7 @@ export class CanvasRenderer {
     this.drawBackground(state.map);
     this.drawPlatforms(state.map.platforms);
     this.drawUseEffects();
+    this.drawAreas(state.combat.areas ?? []);
     this.drawProjectiles(state.combat.projectiles ?? []);
     this.drawHitboxes(state.combat.hitboxes);
     for (const character of state.characters) {
@@ -279,6 +280,26 @@ export class CanvasRenderer {
     }
   }
 
+  drawAreas(areas) {
+    const ctx = this.ctx;
+    for (const area of areas) {
+      const weapon = area.visualWeaponId
+        ? EDITOR_WEAPONS[area.visualWeaponId]
+        : null;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, Math.max(0.25, area.remainingTicks / 30));
+      if (weapon?.visual?.parts) {
+        this.drawWeaponProjectile(area, weapon);
+      } else {
+        ctx.fillStyle = "rgba(0, 80, 255, 0.32)";
+        for (const box of area.hitboxes ?? []) {
+          ctx.fillRect(box.x, box.y, box.w, box.h);
+        }
+      }
+      ctx.restore();
+    }
+  }
+
   drawUseEffects() {
     const ctx = this.ctx;
     for (const effect of this.useEffects) {
@@ -338,7 +359,17 @@ export class CanvasRenderer {
       pendingAbility?.startupWeaponVisualId ??
       character.actionWeaponVisualId ??
       character.defaultWeaponId;
-    const weapon = visualWeaponId ? EDITOR_WEAPONS[visualWeaponId] : null;
+    const passiveWeaponIds = new Set(character.passiveWeaponIds ?? []);
+    const passiveWeapons = [...passiveWeaponIds]
+      .map((weaponId) => EDITOR_WEAPONS[weaponId])
+      .filter(Boolean);
+    const weapon =
+      visualWeaponId && !passiveWeaponIds.has(visualWeaponId)
+        ? EDITOR_WEAPONS[visualWeaponId]
+        : null;
+    for (const passiveWeapon of passiveWeapons) {
+      if (passiveWeapon.layer === "back") this.drawCharacterWeapon(passiveWeapon);
+    }
     if (weapon?.layer === "back") this.drawCharacterWeapon(weapon);
 
     if (character.visual?.parts?.length) {
@@ -349,6 +380,13 @@ export class CanvasRenderer {
     }
 
     if (weapon?.layer !== "back") this.drawCharacterWeapon(weapon);
+    for (const passiveWeapon of passiveWeapons) {
+      if (passiveWeapon.layer !== "back") this.drawCharacterWeapon(passiveWeapon);
+    }
+    const stanceIndicator = character.currentStanceIndicatorId
+      ? EDITOR_OTHER_IMAGES[character.currentStanceIndicatorId]
+      : null;
+    if (stanceIndicator) this.drawOtherImage(stanceIndicator);
 
     if (isHitFlash) {
       ctx.globalAlpha = 0.35;
@@ -389,6 +427,16 @@ export class CanvasRenderer {
     ctx.save();
     ctx.translate(weapon.anchor.x, weapon.anchor.y);
     this.drawVisualParts(weapon.visual.parts);
+    ctx.restore();
+  }
+
+  drawOtherImage(image) {
+    if (!image?.visual?.parts) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = image.opacity ?? 1;
+    ctx.translate(image.position?.x ?? 0, image.position?.y ?? 0);
+    this.drawVisualParts(image.visual.parts);
     ctx.restore();
   }
 
@@ -517,6 +565,9 @@ export class CanvasRenderer {
     this.drawStatusBars(characters[0], 24, 22, false, barWidth);
     this.drawStatusBars(characters[1], this.viewportWidth - barWidth - 24, 22, true, barWidth);
     if (matchInfo) this.drawMatchHud(matchInfo);
+    const localIndex = matchInfo?.localPlayerIndex ?? 0;
+    const localCharacter = characters[localIndex] ?? characters[0];
+    if (localCharacter) this.drawCooldownPanel(localCharacter);
   }
 
   drawMatchHud(matchInfo) {
@@ -527,18 +578,16 @@ export class CanvasRenderer {
     ctx.textBaseline = "top";
 
     ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
-    ctx.fillRect(x - 132, 16, 264, 68);
+    ctx.fillRect(x - 180, 16, 360, 68);
     ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
-    ctx.strokeRect(x - 132, 16, 264, 68);
+    ctx.strokeRect(x - 180, 16, 360, 68);
 
     if (matchInfo.mode === "practice") {
       ctx.fillStyle = "#eef2f6";
       ctx.font = "700 18px sans-serif";
       ctx.fillText("Practice Mode", x, 26);
 
-      ctx.font = "12px sans-serif";
-      ctx.fillStyle = "#aeb7c4";
-      ctx.fillText("R reset / Esc back", x, 54);
+      this.drawTopActionHints(x, 54);
       ctx.restore();
       return;
     }
@@ -553,27 +602,31 @@ export class CanvasRenderer {
     ctx.font = "12px sans-serif";
     ctx.fillStyle = "#aeb7c4";
     ctx.fillText(matchInfo.statusText, x, 59);
+    this.drawTopActionHints(x, 39);
 
     ctx.font = "700 13px sans-serif";
     ctx.fillStyle = "#fff4b0";
-    ctx.fillText(`P1 ${formatRoundWins(matchInfo.roundWins[0])}`, x - 86, 28);
-    ctx.fillText(`P2 ${formatRoundWins(matchInfo.roundWins[1])}`, x + 86, 28);
+    ctx.fillText(`P1 ${formatRoundWins(matchInfo.roundWins[0])}`, x - 132, 28);
+    ctx.fillText(`P2 ${formatRoundWins(matchInfo.roundWins[1])}`, x + 132, 28);
+    ctx.restore();
+  }
+
+  drawTopActionHints(centerX, y) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = "700 12px sans-serif";
+    ctx.fillStyle = "#d7dde8";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "right";
+    ctx.fillText("R Restart", centerX - 78, y + 9);
+    ctx.textAlign = "left";
+    ctx.fillText("ESC Back", centerX + 78, y + 9);
     ctx.restore();
   }
 
   drawStatusBars(character, x, y, alignRight, width) {
     this.drawHealth(character, x, y, alignRight, width);
     this.drawStamina(character, x, y + 30, alignRight, width);
-    let skillY = y + 48;
-    if (character.abilities.movementSkill) {
-      this.drawMovementSkillStatus(character, x, skillY, alignRight, width);
-      skillY += 14;
-    }
-    this.drawSkillStatus(character, x, skillY, alignRight, width);
-    this.drawSkill2Status(character, x, skillY + 14, alignRight, width);
-    if (character.abilities.extra) {
-      this.drawExtraSkillStatus(character, x, skillY + 28, alignRight, width);
-    }
   }
 
   drawHealth(character, x, y, alignRight, width) {
@@ -636,78 +689,68 @@ export class CanvasRenderer {
     );
   }
 
-  drawSkillStatus(character, x, y, alignRight, width) {
+  drawCooldownPanel(character) {
     const ctx = this.ctx;
-    const skillId = character.abilities.skill1;
-    const ability = skillId ? ABILITIES[skillId] : null;
-    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
-    const label = ability ? ability.name : "No Skill";
-    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
+    const items = getCooldownItems(character);
+    if (items.length === 0) return;
 
-    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
-    ctx.font = "11px sans-serif";
+    const panelWidth = Math.min(this.viewportWidth - 36, Math.max(420, items.length * 118));
+    const itemGap = 8;
+    const itemWidth = Math.floor((panelWidth - itemGap * (items.length - 1)) / items.length);
+    const panelHeight = 72;
+    const panelX = (this.viewportWidth - panelWidth) / 2;
+    const panelY = this.viewportHeight - panelHeight - 22;
+
+    ctx.save();
+    ctx.fillStyle = "#d7dde5";
+    ctx.font = "700 12px sans-serif";
+    ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.textAlign = alignRight ? "right" : "left";
-    ctx.fillText(
-      `K ${label}: ${status}`,
-      alignRight ? x + width : x,
-      y,
-    );
+    ctx.fillText(`P${character.playerIndex + 1} Cooldowns`, panelX + 12, panelY + 8);
+
+    const itemY = panelY + 28;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const x = panelX + index * (itemWidth + itemGap);
+      this.drawCooldownItem(item, x, itemY, itemWidth, 34);
+    }
+    ctx.restore();
   }
 
-  drawMovementSkillStatus(character, x, y, alignRight, width) {
+  drawCooldownItem(item, x, y, width, height) {
     const ctx = this.ctx;
-    const skillId = character.abilities.movementSkill;
-    const ability = skillId ? ABILITIES[skillId] : null;
-    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
-    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
+    const cooldown = item.cooldown;
+    const progress = item.maxCooldown > 0
+      ? Math.max(0, Math.min(1, cooldown / item.maxCooldown))
+      : 0;
+    const ready = cooldown <= 0;
 
-    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
-    ctx.font = "11px sans-serif";
+    ctx.fillStyle = ready ? "rgba(138, 146, 156, 0.18)" : "rgba(104, 111, 122, 0.2)";
+    ctx.fillRect(x, y, width, height);
+    if (!ready) {
+      ctx.fillStyle = "rgba(176, 184, 194, 0.3)";
+      ctx.fillRect(x, y, width * progress, height);
+    }
+    ctx.strokeStyle = ready ? "rgba(190, 198, 208, 0.46)" : "rgba(160, 168, 178, 0.58)";
+    ctx.strokeRect(x, y, width, height);
+
+    ctx.fillStyle = "#e1e5eb";
+    ctx.font = "700 12px sans-serif";
+    ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.textAlign = alignRight ? "right" : "left";
-    ctx.fillText(
-      `Shift ${ability?.name ?? "No Skill"}: ${status}`,
-      alignRight ? x + width : x,
-      y,
-    );
-  }
+    ctx.fillText(item.key, x + 7, y + 5);
 
-  drawSkill2Status(character, x, y, alignRight, width) {
-    const ctx = this.ctx;
-    const skillId = character.abilities.skill2;
-    const ability = skillId ? ABILITIES[skillId] : null;
-    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
-    const label = ability ? ability.name : "No Skill";
-    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
-
-    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
     ctx.font = "11px sans-serif";
-    ctx.textBaseline = "top";
-    ctx.textAlign = alignRight ? "right" : "left";
+    ctx.fillStyle = "#b8c0ca";
     ctx.fillText(
-      `L ${label}: ${status}`,
-      alignRight ? x + width : x,
-      y,
+      fitLabel(item.name, width - 14),
+      x + 7,
+      y + 18,
     );
-  }
-
-  drawExtraSkillStatus(character, x, y, alignRight, width) {
-    const ctx = this.ctx;
-    const skillId = character.abilities.extra;
-    const ability = skillId ? ABILITIES[skillId] : null;
-    const cooldown = skillId ? character.cooldowns[skillId] ?? 0 : 0;
-    const status = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "Ready";
-
-    ctx.fillStyle = cooldown > 0 ? "#aeb7c4" : "#eef2f6";
-    ctx.font = "11px sans-serif";
-    ctx.textBaseline = "top";
-    ctx.textAlign = alignRight ? "right" : "left";
-    ctx.fillText(
-      `; ${ability?.name ?? "No Skill"}: ${status}`,
-      alignRight ? x + width : x,
-      y,
-    );
+    ctx.font = "700 12px sans-serif";
+    ctx.fillStyle = ready ? "#cfd5dd" : "#aeb6c0";
+    ctx.textAlign = "right";
+    ctx.fillText(ready ? "Ready" : `${cooldown.toFixed(1)}s`, x + width - 7, y + 5);
   }
 
   drawCenterMessage(text, subtext, dim) {
@@ -731,6 +774,38 @@ export class CanvasRenderer {
 
 function formatRoundWins(wins) {
   return `${wins}/2`;
+}
+
+function getCooldownItems(character) {
+  const slots = [
+    ["basicAttack", "J"],
+    ["movementSkill", "Shift"],
+    ["skill1", "K"],
+    ["skill2", "L"],
+    ["extra", ";"],
+    ["special", "N"],
+  ];
+
+  return slots
+    .map(([slot, fallbackKey]) => {
+      const abilityId = character.abilities?.[slot];
+      const ability = abilityId ? ABILITIES[abilityId] : null;
+      if (!ability) return null;
+      return {
+        slot,
+        key: character.actionInputs?.[slot] ?? fallbackKey,
+        name: ability.name ?? abilityId,
+        cooldown: character.cooldowns?.[abilityId] ?? 0,
+        maxCooldown: ability.cooldown ?? 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+function fitLabel(label, maxWidth) {
+  const limit = Math.max(5, Math.floor(maxWidth / 7));
+  if (label.length <= limit) return label;
+  return `${label.slice(0, Math.max(1, limit - 1))}…`;
 }
 
 function getHitboxColor(type) {

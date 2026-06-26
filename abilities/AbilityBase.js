@@ -29,6 +29,17 @@ export function useAbility(player, abilityId, context) {
     return false;
   }
 
+  if (ability.type === "stanceSwitch") {
+    applyStanceSwitch(player, ability);
+    pushUseEffect(player, ability, context);
+    player.cooldowns[abilityId] = ability.cooldown ?? 0;
+    if (ability.editorAction) {
+      player.cooldownTicks[abilityId] = ability.cooldownTicks ?? 0;
+    }
+    player.skillFlash = 0.18;
+    return true;
+  }
+
   applyAbilityMovement(player, ability);
   pushUseEffect(player, ability, context);
   if (ability.activeWeaponVisualId) {
@@ -64,7 +75,11 @@ export function useAbility(player, abilityId, context) {
   }
 
   if (ability.type === "movement") {
-    applyMovementAbility(player, ability);
+    if ((ability.startup ?? 0) > 0) {
+      beginPendingAbility(player, ability);
+    } else {
+      applyMovementAbility(player, ability);
+    }
     player.skillFlash =
       ability.movement?.durationSeconds ?? ability.moveTime ?? 0.16;
     return true;
@@ -84,8 +99,17 @@ export function useAbility(player, abilityId, context) {
 function applyAbilityMovement(player, ability) {
   if (ability.type !== "dashMelee") return;
 
-  player.vx = ability.dashSpeed * player.facing;
-  player.dashTimer = ability.dashTime;
+  const movement = ability.movement;
+  const direction = movement?.direction === "backward" ? -player.facing : player.facing;
+  const speed = movement?.speed ?? ability.dashSpeed;
+  player.vx = speed * direction;
+  if (ability.editorAction) {
+    player.dashTicks = movement?.duration ?? ability.activeTicks ?? 0;
+    player.dashStopOnEnd = Boolean(movement?.stopOnEnd);
+    player.dashTimer = 0;
+  } else {
+    player.dashTimer = ability.dashTime;
+  }
 }
 
 function applyMovementAbility(player, ability) {
@@ -196,6 +220,18 @@ function releasePendingAbility(player, ability, context) {
     fireProjectile(player, ability, context);
     return;
   }
+  if (ability.type === "movement") {
+    player.pendingAbility.released = true;
+    applyMovementAbility(player, ability);
+    player.pendingAbility = null;
+    return;
+  }
+  if (ability.type === "areaHazard") {
+    player.pendingAbility.released = true;
+    releaseEditorAreaHazard(player, ability, context);
+    player.pendingAbility = null;
+    return;
+  }
   releaseAbilityHitbox(player, ability, context);
 }
 
@@ -240,6 +276,7 @@ function releaseEditorHitboxes(player, ability, context) {
   const spawnTick = Number(context.simulationTick) || 0;
   const attackInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
   const hitTargetIds = new Set();
+  const damage = getAbilityDamage(player, ability);
   for (const hitbox of ability.hitboxes ?? []) {
     const x =
       direction > 0
@@ -255,7 +292,10 @@ function releaseEditorHitboxes(player, ability, context) {
       y: player.y + hitbox.y,
       w: hitbox.w,
       h: hitbox.h,
-      damage: ability.damage,
+      followOwner: ability.type === "dashMelee",
+      sourceHitbox: { ...hitbox },
+      sourceFacing: direction,
+      damage,
       knockback: {
         x: ability.knockback.x * direction,
         y: ability.knockback.y,
@@ -270,6 +310,7 @@ function releaseEditorHitboxes(player, ability, context) {
       stun: ability.stun,
     });
   }
+  consumeModeSwapBonus(player, ability);
 }
 
 function fireEditorProjectile(player, ability, context) {
@@ -284,6 +325,7 @@ function fireEditorProjectile(player, ability, context) {
       : player.x + player.w - projectile.spawn.x - hitbox.w;
   const spawnTick = Number(context.simulationTick) || 0;
   const instanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  const damage = getAbilityDamage(player, ability);
   context.combat.spawnProjectile({
     id: instanceId,
     attackInstanceId: instanceId,
@@ -296,7 +338,7 @@ function fireEditorProjectile(player, ability, context) {
     h: hitbox.h,
     vx: projectile.speed * direction,
     vy: 0,
-    damage: ability.damage,
+    damage,
     knockback: {
       x: ability.knockback.x * direction,
       y: ability.knockback.y,
@@ -321,6 +363,68 @@ function fireEditorProjectile(player, ability, context) {
     excludePartNames: [...(projectile.excludePartNames ?? [])],
     facing: direction,
   });
+  consumeModeSwapBonus(player, ability);
+}
+
+function applyStanceSwitch(player, ability) {
+  const stance = player.stance;
+  if (!stance?.modes) return;
+
+  const modeIds = ability.stanceSwitch?.modes?.length
+    ? ability.stanceSwitch.modes
+    : Object.keys(stance.modes);
+  const currentIndex = Math.max(0, modeIds.indexOf(player.currentStanceMode));
+  const nextModeId = modeIds[(currentIndex + 1) % modeIds.length];
+  const nextMode = stance.modes[nextModeId];
+  if (!nextMode) return;
+
+  player.currentStanceMode = nextModeId;
+  player.abilities = { ...player.abilities, ...nextMode.actionSlots };
+  player.defaultWeaponId = nextMode.weaponId ?? player.defaultWeaponId;
+  player.currentStanceIndicatorId = nextMode.indicatorId ?? null;
+  player.modeSwapBonusBasicAttackReady = Boolean(
+    ability.stanceSwitch?.bonusNextBasic,
+  );
+  player.modeSwapBonusActionId = nextMode.actionSlots.basicAttack ?? null;
+  player.modeSwapBonusDamage = ability.stanceSwitch?.bonusDamage ?? 0;
+}
+
+function releaseEditorAreaHazard(player, ability, context) {
+  const spawnTick = Number(context.simulationTick) || 0;
+  const direction = player.facing;
+  const areaInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  context.combat.spawnArea({
+    id: areaInstanceId,
+    areaInstanceId,
+    owner: player,
+    abilityId: ability.id,
+    x: player.x,
+    y: player.y,
+    w: player.w,
+    h: player.h,
+    facing: direction,
+    hitboxes: (ability.hitboxes ?? []).map((hitbox) => ({
+      x:
+        direction > 0
+          ? player.x + hitbox.x
+          : player.x + player.w - hitbox.x - hitbox.w,
+      y: player.y + hitbox.y,
+      w: hitbox.w,
+      h: hitbox.h,
+    })),
+    damage: ability.damage,
+    knockback: {
+      x: ability.knockback.x * direction,
+      y: ability.knockback.y,
+    },
+    durationTicks: ability.area.durationTicks,
+    damageIntervalTicks: ability.area.damageIntervalTicks,
+    tickRate: ability.tickRate,
+    visualWeaponId: ability.area.visualWeaponId,
+    effectType: ability.effectType,
+    screenShake: ability.screenShake,
+    stun: ability.stun,
+  });
 }
 
 function pushUseEffect(player, ability, context) {
@@ -335,6 +439,26 @@ function pushUseEffect(player, ability, context) {
     facing: player.facing,
     size: Math.max(player.w, player.h),
   });
+}
+
+function getAbilityDamage(player, ability) {
+  const bonus =
+    player.modeSwapBonusBasicAttackReady &&
+    ability.id === player.modeSwapBonusActionId
+      ? player.modeSwapBonusDamage ?? 0
+      : 0;
+  return (ability.damage ?? 0) + bonus;
+}
+
+function consumeModeSwapBonus(player, ability) {
+  if (
+    player.modeSwapBonusBasicAttackReady &&
+    ability.id === player.modeSwapBonusActionId
+  ) {
+    player.modeSwapBonusBasicAttackReady = false;
+    player.modeSwapBonusActionId = null;
+    player.modeSwapBonusDamage = 0;
+  }
 }
 
 function createAttackBox(player, ability) {

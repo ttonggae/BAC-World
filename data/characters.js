@@ -37,7 +37,7 @@ export const CHARACTERS = {
       staminaRegenDelay: 0.6,
     },
     abilities: {
-      basicAttack: "basic_punch",
+      basicAttack: "heavy_basic_punch",
       skill1: "ground_slam",
       skill2: "iron_guard",
       special: null,

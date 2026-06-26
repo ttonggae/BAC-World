@@ -14,6 +14,12 @@ import {
   FIGHTER_CHARACTER_DATA,
   FIGHTER_WEAPON_DATA,
 } from "./editorFighter.js";
+import {
+  FYLANG_ACTION_DATA,
+  FYLANG_CHARACTER_DATA,
+  FYLANG_OTHER_IMAGE_DATA,
+  FYLANG_WEAPON_DATA,
+} from "./editorFylang.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -22,26 +28,39 @@ const DATA_SOURCES = [
     characters: EDITOR_CHARACTER_DATA,
     actions: EDITOR_ACTION_DATA,
     weapons: EDITOR_WEAPON_DATA,
+    otherImages: {},
     namespace: "",
   },
   {
     characters: WIZARD_CHARACTER_DATA,
     actions: WIZARD_ACTION_DATA,
     weapons: WIZARD_WEAPON_DATA,
+    otherImages: {},
     namespace: "",
   },
   {
     characters: FIGHTER_CHARACTER_DATA,
     actions: FIGHTER_ACTION_DATA,
     weapons: FIGHTER_WEAPON_DATA,
+    otherImages: {},
     namespace: "fighter",
+  },
+  {
+    characters: FYLANG_CHARACTER_DATA,
+    actions: FYLANG_ACTION_DATA,
+    weapons: FYLANG_WEAPON_DATA,
+    otherImages: FYLANG_OTHER_IMAGE_DATA,
+    namespace: "fylang",
   },
 ];
 
 export function adaptEditorCharacters() {
   return Object.fromEntries(
-    DATA_SOURCES.flatMap(({ characters, namespace }) =>
-      Object.values(characters).map((character) => [
+    DATA_SOURCES.flatMap(({ characters, actions, namespace }) =>
+      Object.values(characters).map((character) => {
+        const getInput = (actionId) =>
+          actionId ? actions[actionId]?.input?.toUpperCase() ?? null : null;
+        return [
         character.id,
         {
           id: character.id,
@@ -70,21 +89,34 @@ export function adaptEditorCharacters() {
               character.actionSlots.movementSkill,
             ),
             extra: getRuntimeId(namespace, character.actionSlots.extra),
-            special: null,
+            special: getRuntimeId(namespace, character.actionSlots.special),
           },
           actionIds: character.actionIds.map((id) => getRuntimeId(namespace, id)),
           extraActionIds: character.extraActionIds.map((id) =>
             getRuntimeId(namespace, id),
           ),
           defaultWeaponId: getRuntimeId(namespace, character.defaultWeaponId),
+          passiveWeaponIds: (character.passiveWeaponIds ?? []).map((id) =>
+            getRuntimeId(namespace, id),
+          ),
           defaultActionId: getRuntimeId(namespace, character.defaultActionId),
           sourceActionSlots: { ...character.actionSlots },
+          actionInputs: {
+            basicAttack: getInput(character.actionSlots.basicAttack),
+            skill1: getInput(character.actionSlots.skill1),
+            skill2: getInput(character.actionSlots.skill2),
+            extra: getInput(character.actionSlots.extra),
+            special: getInput(character.actionSlots.special),
+            movementSkill: getInput(character.actionSlots.movementSkill),
+          },
           sourceDefaultWeaponId: character.defaultWeaponId,
           sourceDefaultActionId: character.defaultActionId,
+          stance: adaptStance(character.stance, namespace),
           visual: character.visual,
           editorSchemaVersion: BAC_EDITOR_SCHEMA.version,
         },
-      ]),
+      ];
+      }),
     ),
   );
 }
@@ -131,14 +163,33 @@ export function adaptEditorActions() {
                   durationSeconds: ticksToSeconds(action.movement.duration),
                 }
               : null,
+            stanceSwitch: action.stanceSwitch
+              ? {
+                  ...action.stanceSwitch,
+                  modes: [...(action.stanceSwitch.modes ?? [])],
+                }
+              : null,
             projectile: action.projectile
               ? {
                   ...action.projectile,
                   spawn: { ...action.projectile.spawn },
+                  visualWeaponId: getRuntimeId(
+                    namespace,
+                    action.projectile.visualWeaponId,
+                  ),
                   homing: action.projectile.homing
                     ? { ...action.projectile.homing }
                     : null,
                   lifetimeSeconds: ticksToSeconds(action.projectile.lifetime),
+                }
+              : null,
+            area: action.area
+              ? {
+                  ...action.area,
+                  visualWeaponId: getRuntimeId(
+                    namespace,
+                    action.area.visualWeaponId,
+                  ),
                 }
               : null,
             effects: action.effects?.map((effect) => ({ ...effect })) ?? [],
@@ -148,6 +199,8 @@ export function adaptEditorActions() {
               : action.kind === "projectile"
                 ? action.startup + action.recovery
                 : 0,
+            invincibleTicks: action.invincibleTicks ?? 0,
+            hurtboxDisabledTicks: action.hurtboxDisabledTicks ?? 0,
             stun: ticksToSeconds(
               action.stunTicks ?? (action.kind === "projectile" ? 5 : 4),
             ),
@@ -184,6 +237,15 @@ export const EDITOR_WEAPONS = Object.fromEntries(
   ),
 );
 
+export const EDITOR_OTHER_IMAGES = Object.fromEntries(
+  DATA_SOURCES.flatMap(({ otherImages = {}, namespace }) =>
+    Object.values(otherImages).map((image) => {
+      const runtimeId = getRuntimeId(namespace, image.id);
+      return [runtimeId, { ...image, id: runtimeId, sourceImageId: image.id }];
+    }),
+  ),
+);
+
 function adaptActionType(kind) {
   if (kind === "effectMelee") return "effectMelee";
   return kind;
@@ -192,4 +254,28 @@ function adaptActionType(kind) {
 function getRuntimeId(namespace, id) {
   if (!id) return null;
   return namespace ? `${namespace}_${id}` : id;
+}
+
+function adaptStance(stance, namespace) {
+  if (!stance) return null;
+  return {
+    defaultMode: stance.defaultMode,
+    modes: Object.fromEntries(
+      Object.entries(stance.modes ?? {}).map(([modeId, mode]) => [
+        modeId,
+        {
+          weaponId: getRuntimeId(namespace, mode.weaponId),
+          indicatorId: getRuntimeId(namespace, mode.indicatorId),
+          actionSlots: {
+            basicAttack: getRuntimeId(namespace, mode.actionSlots.basicAttack),
+            skill1: getRuntimeId(namespace, mode.actionSlots.skill1),
+            skill2: getRuntimeId(namespace, mode.actionSlots.skill2),
+            movementSkill: getRuntimeId(namespace, mode.actionSlots.movementSkill),
+            extra: getRuntimeId(namespace, mode.actionSlots.extra),
+            special: getRuntimeId(namespace, mode.actionSlots.special),
+          },
+        },
+      ]),
+    ),
+  };
 }
