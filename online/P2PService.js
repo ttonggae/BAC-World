@@ -76,6 +76,7 @@ export class P2PService {
     this.onMetrics = onMetrics;
     this.peer = null;
     this.channel = null;
+    this.inputChannel = null;
     this.unsubscribe = null;
     this.remoteDescriptionSet = false;
     this.processedCandidates = new Set();
@@ -85,6 +86,7 @@ export class P2PService {
       iceConnectionState: "new",
       signalingState: "stable",
       dataChannelState: "closed",
+      inputChannelState: "closed",
       bufferedAmount: 0,
       lastPacketAt: 0,
       lastPingAt: 0,
@@ -112,7 +114,12 @@ export class P2PService {
     await resetRoomWebrtc(this.roomCode);
     this.createPeer();
     this.channel = this.peer.createDataChannel("game");
-    this.bindDataChannel(this.channel);
+    this.bindDataChannel(this.channel, "control");
+    this.inputChannel = this.peer.createDataChannel("input", {
+      ordered: false,
+      maxRetransmits: 0,
+    });
+    this.bindDataChannel(this.inputChannel, "input");
     this.listenForSignals();
 
     const offer = await this.peer.createOffer();
@@ -126,8 +133,13 @@ export class P2PService {
     this.setStatus("connecting");
     this.createPeer();
     this.peer.ondatachannel = (event) => {
+      if (event.channel.label === "input") {
+        this.inputChannel = event.channel;
+        this.bindDataChannel(this.inputChannel, "input");
+        return;
+      }
       this.channel = event.channel;
-      this.bindDataChannel(this.channel);
+      this.bindDataChannel(this.channel, "control");
     };
     this.listenForSignals();
     this.log("Guest waiting for offer.");
@@ -235,27 +247,44 @@ export class P2PService {
     }
   }
 
-  bindDataChannel(channel) {
+  bindDataChannel(channel, kind = "control") {
     channel.bufferedAmountLowThreshold = BUFFER_LOW_AMOUNT;
     channel.onopen = () => {
-      this.setChannelState(channel.readyState);
-      this.setStatus("connected");
+      if (kind === "control") {
+        this.setChannelState(channel.readyState);
+        this.setStatus("connected");
+      } else {
+        this.metrics.inputChannelState = channel.readyState;
+      }
       this.updateBufferedAmount();
-      this.log("DataChannel open.");
+      this.log(`${kind === "input" ? "Input" : "Data"}Channel open.`);
     };
     channel.onclose = () => {
-      this.setChannelState(channel.readyState);
-      this.setStatus("closed");
+      if (kind === "control") {
+        this.setChannelState(channel.readyState);
+        this.setStatus("closed");
+      } else {
+        this.metrics.inputChannelState = channel.readyState;
+      }
       this.updateBufferedAmount();
-      this.log("DataChannel closed.");
+      this.log(`${kind === "input" ? "Input" : "Data"}Channel closed.`);
     };
     channel.onerror = (event) => {
-      this.setChannelState(channel.readyState);
-      this.fail("DataChannel error.", event.error ?? event);
+      if (kind === "control") {
+        this.setChannelState(channel.readyState);
+        this.fail("DataChannel error.", event.error ?? event);
+      } else {
+        this.metrics.inputChannelState = channel.readyState;
+        this.fail("Input DataChannel error.", event.error ?? event);
+      }
     };
     channel.onbufferedamountlow = () => this.updateBufferedAmount();
     channel.onmessage = (event) => this.handleMessage(event.data);
-    this.setChannelState(channel.readyState);
+    if (kind === "control") {
+      this.setChannelState(channel.readyState);
+    } else {
+      this.metrics.inputChannelState = channel.readyState;
+    }
     this.updateBufferedAmount();
   }
 
@@ -311,18 +340,23 @@ export class P2PService {
   }
 
   send(message, options = {}) {
-    if (!this.channel || this.channel.readyState !== "open") {
+    const realtimeChannel =
+      options.realtime && this.inputChannel?.readyState === "open"
+        ? this.inputChannel
+        : null;
+    const channel = realtimeChannel ?? this.channel;
+    if (!channel || channel.readyState !== "open") {
       if (options.critical) this.log("DataChannel is not open.");
       return false;
     }
     this.updateBufferedAmount();
-    if (this.channel.bufferedAmount > MAX_BUFFERED_AMOUNT && !options.critical) {
+    if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT && !options.critical) {
       this.metrics.droppedSendCount += 1;
       this.emitMetrics();
       return false;
     }
     try {
-      this.channel.send(JSON.stringify(message));
+      channel.send(JSON.stringify(message));
       this.updateBufferedAmount();
       return true;
     } catch (error) {
@@ -349,6 +383,10 @@ export class P2PService {
       this.channel.close();
       this.channel = null;
     }
+    if (this.inputChannel) {
+      this.inputChannel.close();
+      this.inputChannel = null;
+    }
     if (this.peer) {
       this.peer.close();
       this.peer = null;
@@ -357,6 +395,8 @@ export class P2PService {
     this.processedCandidates.clear();
     this.signalQueue = Promise.resolve();
     this.setChannelState("closed");
+    this.metrics.inputChannelState = "closed";
+    this.updateBufferedAmount();
   }
 
   setStatus(status) {
@@ -379,12 +419,17 @@ export class P2PService {
   }
 
   updateBufferedAmount() {
-    this.metrics.bufferedAmount = this.channel?.bufferedAmount ?? 0;
+    this.metrics.bufferedAmount =
+      (this.channel?.bufferedAmount ?? 0) +
+      (this.inputChannel?.bufferedAmount ?? 0);
     this.emitMetrics();
   }
 
   getBufferedAmount() {
-    return this.channel?.bufferedAmount ?? 0;
+    return (
+      (this.channel?.bufferedAmount ?? 0) +
+      (this.inputChannel?.bufferedAmount ?? 0)
+    );
   }
 
   getMetrics() {

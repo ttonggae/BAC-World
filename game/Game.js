@@ -89,16 +89,16 @@ const PRE_MATCH_PREVIEW_TIME = 3;
 const NETWORK_MODE = "rollback";
 const NETCODE_CONFIG = Object.freeze({
   tickRate: 60,
-  inputDelayTicks: 1,
-  rollbackWindow: 12,
+  inputDelayTicks: 2,
+  rollbackWindow: 36,
   checksumInterval: 30,
-  inputBundleSize: 6,
+  inputBundleSize: 24,
 });
 const HEARTBEAT_INTERVAL_MS = 1000;
 const VISIBLE_SOFT_TIMEOUT_MS = 8000;
 const VISIBLE_HARD_TIMEOUT_MS = 30000;
 const HIDDEN_HARD_TIMEOUT_MS = 45000;
-const REMOTE_INPUT_LAST_KNOWN_TICKS = 6;
+const REMOTE_INPUT_LAST_KNOWN_TICKS = 12;
 const LATE_INPUT_WARN_INTERVAL_MS = 1000;
 const NETWORK_BUFFER_WARNING_AMOUNT = 128 * 1024;
 const FIXED_DT = 1 / NETCODE_CONFIG.tickRate;
@@ -2039,7 +2039,7 @@ export class Game {
       0,
       Math.min(2, Math.round(Number(config.inputDelayTicks ?? this.onlineInputDelayTicks) || 0)),
     );
-    const rollbackWindow = [8, 12, 16].includes(Number(config.rollbackWindow))
+    const rollbackWindow = [12, 24, 36].includes(Number(config.rollbackWindow))
       ? Number(config.rollbackWindow)
       : this.onlineRollbackWindow;
     if (broadcast && this.onlineRole !== "host") {
@@ -2097,7 +2097,7 @@ export class Game {
       seq: this.onlineInputSeq,
       playerId: this.localPlayerId,
       inputs,
-    }, { critical: true });
+    }, { realtime: true });
   }
 
   updateOnlineGameTick(tick, { isResimulating = false } = {}) {
@@ -2359,6 +2359,7 @@ export class Game {
     const local = this.localChecksums.get(tick);
     const remote = this.remoteChecksums.get(tick);
     if (!local || !remote) return;
+    if (!this.canCompareChecksumAtTick(tick)) return;
     if (local === remote) {
       if (this.desyncStatus !== "DESYNC") this.desyncStatus = "OK";
       return;
@@ -2373,6 +2374,12 @@ export class Game {
       recentP2Inputs: this.getRecentInputs("p2", tick, 10),
       rollbackLogs: this.rollbackLogs,
     });
+  }
+
+  canCompareChecksumAtTick(tick) {
+    const remoteSlot = this.currentSession?.localSlot === "p1" ? "p2" : "p1";
+    const latestRemoteInputTick = this.onlineLastReceivedInputTicks?.[remoteSlot] ?? -1;
+    return latestRemoteInputTick >= tick;
   }
 
   createOnlineChecksum(tick) {
@@ -2546,7 +2553,7 @@ export class Game {
           ? this.input.isDown("KeyM")
           : this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
       extra:
-        localCharacterId === "inquisitor"
+        localCharacterId === "inquisitor" || localCharacterId === "w_corp_cleaner"
           ? this.input.isDown("KeyB")
           : this.input.isDown("Semicolon"),
       special:
@@ -2578,6 +2585,7 @@ export class Game {
       const tick = Number(entry.tick);
       const actualInput = normalizeOnlineInput(entry.input);
       const predictedInput = this.predictedInputBuffer[slot].get(tick);
+      const previousInput = this.onlineInputBuffer[slot].get(tick);
       this.onlineInputBuffer[slot].set(tick, actualInput);
       this.onlineLastReceivedInputTick = Math.max(this.onlineLastReceivedInputTick, tick);
       this.onlineLastReceivedInputTicks[slot] = Math.max(
@@ -2598,6 +2606,7 @@ export class Game {
       } else if (
         tick < this.onlineTick &&
         !predictedInput &&
+        (!previousInput || !inputsEqual(normalizeOnlineInput(previousInput), actualInput)) &&
         !this.snapshotHistory.has(tick)
       ) {
         this.desyncStatus = `DESYNC / late input @ ${tick}`;
@@ -2609,6 +2618,13 @@ export class Game {
 
     if (earliestMismatch !== null) {
       this.rollbackToTick(earliestMismatch, mismatchReason);
+    }
+    this.comparePendingChecksums();
+  }
+
+  comparePendingChecksums() {
+    for (const tick of this.remoteChecksums.keys()) {
+      this.compareOnlineChecksum(tick);
     }
   }
 
@@ -3486,6 +3502,7 @@ export class Game {
       `Predicted: ${this.predictedInputTicks} / Status: ${this.networkStatus.level} / ` +
       `LastPacket: ${lastPacketAgo} / LocalHidden: ${this.localHidden} / RemoteHidden: ${this.remoteHidden} / ` +
       `Focus: ${focusText} / DataChannel: ${this.p2pChannelState} / ` +
+      `InputChannel: ${metrics?.inputChannelState ?? "-"} / ` +
       `PC: ${metrics?.connectionState ?? "-"} / ICE: ${metrics?.iceConnectionState ?? "-"} / ` +
       `Buffer: ${formatBytes(bufferedAmount)}${bufferedAmount >= NETWORK_BUFFER_WARNING_AMOUNT ? " HIGH" : ""} / ` +
       `Sync: ${this.desyncStatus} / Phase: ${this.onlinePhase}`;
