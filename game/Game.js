@@ -143,6 +143,7 @@ export class Game {
     this.localChecksums = new Map();
     this.remoteChecksums = new Map();
     this.checksumDetails = new Map();
+    this.reportedDesyncTicks = new Set();
     this.desyncStatus = "OK";
     this.onlineSeed = 0;
     this.onlineRngState = 0;
@@ -1719,6 +1720,7 @@ export class Game {
       this.localChecksums = new Map();
       this.remoteChecksums = new Map();
       this.checksumDetails = new Map();
+      this.reportedDesyncTicks = new Set();
       this.desyncStatus = "OK";
       this.onlineSeed = normalizeSeed(matchConfig.seed);
       this.onlineRngState = this.onlineSeed;
@@ -2193,6 +2195,9 @@ export class Game {
     for (const checksumTick of [...this.checksumDetails.keys()]) {
       if (checksumTick >= tick) this.checksumDetails.delete(checksumTick);
     }
+    for (const checksumTick of [...this.reportedDesyncTicks]) {
+      if (checksumTick >= tick) this.reportedDesyncTicks.delete(checksumTick);
+    }
 
     if (!this.restoreGameSnapshot(snapshot)) return false;
     this.isResimulating = true;
@@ -2334,6 +2339,9 @@ export class Game {
     for (const tick of this.checksumDetails.keys()) {
       if (tick < oldestChecksumTick) this.checksumDetails.delete(tick);
     }
+    for (const tick of [...this.reportedDesyncTicks]) {
+      if (tick < oldestChecksumTick) this.reportedDesyncTicks.delete(tick);
+    }
   }
 
   sendOnlineChecksum(tick) {
@@ -2365,6 +2373,8 @@ export class Game {
       return;
     }
     this.desyncStatus = `DESYNC @ ${tick}`;
+    if (this.reportedDesyncTicks.has(tick)) return;
+    this.reportedDesyncTicks.add(tick);
     console.error("BAC World online desync", {
       tick,
       local,
@@ -2378,8 +2388,7 @@ export class Game {
 
   canCompareChecksumAtTick(tick) {
     const remoteSlot = this.currentSession?.localSlot === "p1" ? "p2" : "p1";
-    const latestRemoteInputTick = this.onlineLastReceivedInputTicks?.[remoteSlot] ?? -1;
-    return latestRemoteInputTick >= tick;
+    return Boolean(this.onlineInputBuffer?.[remoteSlot]?.has(tick));
   }
 
   createOnlineChecksum(tick) {
@@ -2395,25 +2404,32 @@ export class Game {
         quantize(character.vy),
         quantize(character.health),
         quantize(character.stamina),
+        quantize(character.staminaRegenTimer),
         character.chargeStack ?? 0,
         character.facing,
         character.onGround ? 1 : 0,
+        this.map?.platforms?.indexOf(character.groundPlatform) ?? -1,
+        quantize(character.dropTimer),
         quantize(character.hitStun),
         character.castLockTicks ?? 0,
+        quantize(character.dashTimer),
         character.dashTicks ?? 0,
         character.dashStopOnEnd ? 1 : 0,
-        character.actionWeaponVisualId ?? "",
-        character.actionWeaponVisualTicks ?? 0,
         character.invincibleTicks ?? 0,
         character.hurtboxDisabledTicks ?? 0,
         character.currentStanceMode ?? "",
-        character.defaultWeaponId ?? "",
-        character.currentStanceIndicatorId ?? "",
         character.modeSwapBonusBasicAttackReady ? 1 : 0,
         character.modeSwapBonusActionId ?? "",
         character.modeSwapBonusDamage ?? 0,
-        JSON.stringify(character.activeStatuses ?? {}),
+        stableStringify(character.buffs ?? {}),
+        stableStringify(character.activeStatuses ?? {}),
         character.pendingAbility?.abilityId ?? "",
+        quantize(character.pendingAbility?.startupRemaining ?? 0),
+        character.pendingAbility?.startupTicksRemaining ?? "",
+        character.pendingAbility?.released ? 1 : 0,
+        ...Object.entries(character.cooldowns ?? {})
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .flatMap(([abilityId, seconds]) => [abilityId, quantize(seconds)]),
         ...Object.entries(character.cooldownTicks ?? {})
           .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
           .flatMap(([abilityId, ticks]) => [abilityId, ticks]),
@@ -2452,26 +2468,28 @@ export class Game {
       vy: character.vy,
       hp: character.health,
       stamina: character.stamina,
+      staminaRegenTimer: character.staminaRegenTimer,
       chargeStack: character.chargeStack ?? 0,
       facing: character.facing,
       onGround: character.onGround,
+      groundPlatformIndex: this.map?.platforms?.indexOf(character.groundPlatform) ?? -1,
+      dropTimer: character.dropTimer,
       hitStun: character.hitStun,
       castLockTicks: character.castLockTicks,
+      dashTimer: character.dashTimer,
       dashTicks: character.dashTicks,
       dashStopOnEnd: character.dashStopOnEnd,
-      actionWeaponVisualId: character.actionWeaponVisualId,
-      actionWeaponVisualTicks: character.actionWeaponVisualTicks,
       invincibleTicks: character.invincibleTicks,
       hurtboxDisabledTicks: character.hurtboxDisabledTicks,
       currentStanceMode: character.currentStanceMode,
-      defaultWeaponId: character.defaultWeaponId,
-      currentStanceIndicatorId: character.currentStanceIndicatorId,
       modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
       modeSwapBonusActionId: character.modeSwapBonusActionId,
       modeSwapBonusDamage: character.modeSwapBonusDamage,
+      buffs: clonePlainObject(character.buffs),
       activeStatuses: clonePlainObject(character.activeStatuses),
+      cooldowns: { ...character.cooldowns },
       cooldownTicks: { ...character.cooldownTicks },
-      pendingAbility: character.pendingAbility?.abilityId ?? null,
+      pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
     });
     return {
       tick,
@@ -3985,6 +4003,19 @@ function normalizeSeed(seed) {
 
 function quantize(value) {
   return Math.round((Number(value) || 0) * 1000);
+}
+
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+    .join(",")}}`;
 }
 
 function hashString(value) {
