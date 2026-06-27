@@ -67,6 +67,7 @@ export class OfflineMatch {
     character.facing = spawn.facing ?? -1;
     character.health = character.maxHealth;
     character.stamina = character.maxStamina;
+    character.chargeStack = 0;
     character.staminaRegenTimer = 0;
     character.cooldowns = {};
     character.cooldownTicks = {};

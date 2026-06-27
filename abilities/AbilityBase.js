@@ -37,6 +37,10 @@ export function useAbility(player, abilityId, context) {
     return false;
   }
 
+  if (!trySpendAbilityCharge(player, ability)) {
+    return false;
+  }
+
   if (!player.trySpendStamina(ability.staminaCost ?? 0)) {
     return false;
   }
@@ -53,6 +57,7 @@ export function useAbility(player, abilityId, context) {
   }
 
   applyAbilityMovement(player, ability);
+  applyChargeOnUse(player, ability);
   pushUseEffect(player, ability, context);
   if (ability.activeWeaponVisualId) {
     player.actionWeaponVisualId = ability.activeWeaponVisualId;
@@ -420,10 +425,15 @@ function useRecastDetonateAbility(player, ability, context) {
     return false;
   }
 
+  if (!trySpendAbilityCharge(player, ability)) {
+    return false;
+  }
+
   if (!player.trySpendStamina(ability.staminaCost ?? 0)) {
     return false;
   }
 
+  applyChargeOnUse(player, ability);
   if (ability.activeWeaponVisualId) {
     player.actionWeaponVisualId = ability.activeWeaponVisualId;
     player.actionWeaponVisualTicks =
@@ -534,6 +544,25 @@ function applyReload(player, ability) {
   if (ability.reload?.restore === "full") {
     player.stamina = player.maxStamina;
     player.staminaRegenTimer = 0;
+  }
+}
+
+function trySpendAbilityCharge(player, ability) {
+  const cost = ability.chargeCost ?? 0;
+  if (!(cost > 0)) return true;
+  if (player.trySpendChargeStack?.(cost)) return true;
+
+  const selfDamage = ability.selfDamageOnChargeFail ?? 0;
+  if (selfDamage > 0) {
+    player.takeSelfDamage?.(selfDamage);
+  }
+  return false;
+}
+
+function applyChargeOnUse(player, ability) {
+  const amount = ability.chargeOnUse ?? 0;
+  if (amount > 0) {
+    player.addChargeStack?.(amount);
   }
 }
 

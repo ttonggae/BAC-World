@@ -744,7 +744,15 @@ export class CanvasRenderer {
     ctx.font = "700 12px sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText(`P${character.playerIndex + 1} Cooldowns`, panelX + 12, panelY + 8);
+    const chargeText =
+      character.maxChargeStack > 0
+        ? ` / CH ${character.chargeStack ?? 0}/${character.maxChargeStack}`
+        : "";
+    ctx.fillText(
+      `P${character.playerIndex + 1} Cooldowns${chargeText}`,
+      panelX + 12,
+      panelY + 8,
+    );
 
     const itemY = panelY + 28;
     for (let index = 0; index < items.length; index += 1) {

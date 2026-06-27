@@ -227,6 +227,7 @@ function applyHitEffects(hitbox, target) {
   let hpStolen = 0;
   let staminaRecovered = 0;
   let hpRecovered = 0;
+  let chargeGained = 0;
   let replacesDamage = false;
   for (const effect of effects) {
     if (effect.type === "stealStamina") {
@@ -256,6 +257,8 @@ function applyHitEffects(hitbox, target) {
       const before = owner.stamina;
       owner.stamina = Math.min(owner.maxStamina, owner.stamina + amount);
       staminaRecovered += owner.stamina - before;
+    } else if (effect.type === "addCharge") {
+      chargeGained += owner.addChargeStack?.(effect.amount ?? 0, effect.max) ?? 0;
     } else if (effect.type === "status" && effect.statusId) {
       target.addStatus({
         ...effect,
@@ -270,6 +273,7 @@ function applyHitEffects(hitbox, target) {
     hpStolen,
     staminaRecovered,
     hpRecovered,
+    chargeGained,
   };
 }
 

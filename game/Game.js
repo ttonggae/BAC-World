@@ -2388,6 +2388,7 @@ export class Game {
         quantize(character.vy),
         quantize(character.health),
         quantize(character.stamina),
+        character.chargeStack ?? 0,
         character.facing,
         character.onGround ? 1 : 0,
         quantize(character.hitStun),
@@ -2444,6 +2445,7 @@ export class Game {
       vy: character.vy,
       hp: character.health,
       stamina: character.stamina,
+      chargeStack: character.chargeStack ?? 0,
       facing: character.facing,
       onGround: character.onGround,
       hitStun: character.hitStun,
@@ -2539,7 +2541,10 @@ export class Game {
       attack: this.input.isDown("KeyJ"),
       skill1: this.input.isDown("KeyK"),
       skill2: this.input.isDown("KeyL"),
-      movementSkill: this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
+      movementSkill:
+        localCharacterId === "w_corp_cleaner"
+          ? this.input.isDown("KeyM")
+          : this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
       extra:
         localCharacterId === "inquisitor"
           ? this.input.isDown("KeyB")
@@ -3651,6 +3656,14 @@ function getControlsForCharacter(baseControls, characterId) {
       movementSkill: baseControls.movementSkill ?? "ShiftLeft",
     };
   }
+  if (characterId === "w_corp_cleaner") {
+    return {
+      ...baseControls,
+      extra: "KeyB",
+      special: "KeyN",
+      movementSkill: "KeyM",
+    };
+  }
   return { ...baseControls };
 }
 
@@ -3686,6 +3699,8 @@ function serializeCharacter(character) {
     maxHealth: character.maxHealth,
     stamina: character.stamina,
     maxStamina: character.maxStamina,
+    chargeStack: character.chargeStack ?? 0,
+    maxChargeStack: character.maxChargeStack ?? 0,
     cooldowns: { ...character.cooldowns },
     cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
@@ -3726,6 +3741,8 @@ function applyCharacterSnapshot(character, snapshot) {
   character.maxHealth = snapshot.maxHealth;
   character.stamina = snapshot.stamina;
   character.maxStamina = snapshot.maxStamina;
+  character.chargeStack = snapshot.chargeStack ?? 0;
+  character.maxChargeStack = snapshot.maxChargeStack ?? character.maxChargeStack ?? 0;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs ?? {});
@@ -3783,6 +3800,7 @@ function serializeCharacterSnapshot(character, map) {
     facing: character.facing,
     health: character.health,
     stamina: character.stamina,
+    chargeStack: character.chargeStack ?? 0,
     staminaRegenTimer: character.staminaRegenTimer,
     staminaFlash: character.staminaFlash,
     cooldowns: { ...character.cooldowns },
@@ -3828,6 +3846,7 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.facing = snapshot.facing;
   character.health = snapshot.health;
   character.stamina = snapshot.stamina;
+  character.chargeStack = snapshot.chargeStack ?? 0;
   character.staminaRegenTimer = snapshot.staminaRegenTimer;
   character.staminaFlash = snapshot.staminaFlash;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };

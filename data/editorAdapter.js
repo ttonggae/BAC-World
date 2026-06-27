@@ -31,6 +31,12 @@ import {
   HAI_HT2_OTHER_IMAGE_DATA,
   HAI_HT2_WEAPON_DATA,
 } from "./editorHaiHt2.js";
+import {
+  W_CORP_CLEANER_ACTION_DATA,
+  W_CORP_CLEANER_CHARACTER_DATA,
+  W_CORP_CLEANER_OTHER_IMAGE_DATA,
+  W_CORP_CLEANER_WEAPON_DATA,
+} from "./editorWCorpCleaner.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -77,6 +83,13 @@ const DATA_SOURCES = [
     otherImages: HAI_HT2_OTHER_IMAGE_DATA,
     namespace: "hai",
   },
+  {
+    characters: W_CORP_CLEANER_CHARACTER_DATA,
+    actions: W_CORP_CLEANER_ACTION_DATA,
+    weapons: W_CORP_CLEANER_WEAPON_DATA,
+    otherImages: W_CORP_CLEANER_OTHER_IMAGE_DATA,
+    namespace: "wcorp",
+  },
 ];
 
 export function adaptEditorCharacters() {
@@ -104,6 +117,7 @@ export function adaptEditorCharacters() {
             weight: character.stats.weight,
             staminaRegenRate: character.stats.staminaRegen,
             staminaRegenDelay: character.stats.staminaRegenDelay,
+            maxChargeStack: character.stats.maxChargeStack ?? 0,
           },
           abilities: {
             basicAttack: getRuntimeId(namespace, character.actionSlots.basicAttack),
@@ -230,6 +244,9 @@ export function adaptEditorActions() {
             moveSpeedBonus: action.moveSpeedBonus ?? 0,
             sustainStaminaCostPerSecond:
               action.sustainStaminaCostPerSecond ?? 0,
+            chargeCost: action.chargeCost ?? 0,
+            chargeOnUse: action.chargeOnUse ?? 0,
+            selfDamageOnChargeFail: action.selfDamageOnChargeFail ?? 0,
             effects: action.effects?.map((effect) => ({ ...effect })) ?? [],
             effectsImplemented: true,
             castLockTicks: action.lockActions

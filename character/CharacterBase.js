@@ -50,6 +50,8 @@ export class CharacterBase {
     };
     this.maxStamina = stats.maxStamina;
     this.stamina = stats.maxStamina;
+    this.maxChargeStack = stats.maxChargeStack ?? 0;
+    this.chargeStack = 0;
     this.staminaRegenRate = staminaConfig.regenRate;
     this.staminaRegenDelay = staminaConfig.regenDelay;
     this.staminaRegenTimer = 0;
@@ -299,7 +301,7 @@ export class CharacterBase {
     for (const [key, status] of Object.entries(this.activeStatuses)) {
       status.remainingTicks = Math.max(0, status.remainingTicks - 1);
       if (
-        status.statusId === "burn" &&
+        (status.statusId === "burn" || status.statusId === "bleed") &&
         status.ticksApplied < (status.maxTicks ?? 0)
       ) {
         status.tickTimer -= 1;
@@ -315,7 +317,7 @@ export class CharacterBase {
       }
       if (
         status.remainingTicks <= 0 ||
-        (status.statusId === "burn" &&
+        ((status.statusId === "burn" || status.statusId === "bleed") &&
           status.ticksApplied >= (status.maxTicks ?? 0))
       ) {
         delete this.activeStatuses[key];
@@ -390,6 +392,32 @@ export class CharacterBase {
     this.stamina = Math.max(0, this.stamina - cost);
     this.staminaRegenTimer = this.staminaRegenDelay;
     return true;
+  }
+
+  addChargeStack(amount, max = this.maxChargeStack) {
+    if (!(this.maxChargeStack > 0) || !(amount > 0)) return 0;
+    const limit = Math.max(0, max ?? this.maxChargeStack);
+    const before = this.chargeStack;
+    this.chargeStack = Math.min(limit, this.chargeStack + amount);
+    return this.chargeStack - before;
+  }
+
+  trySpendChargeStack(cost) {
+    if (!(cost > 0)) return true;
+    if (this.chargeStack < cost) {
+      this.staminaFlash = 0.22;
+      return false;
+    }
+    this.chargeStack = Math.max(0, this.chargeStack - cost);
+    return true;
+  }
+
+  takeSelfDamage(amount) {
+    const damage = Math.max(0, Math.ceil(amount ?? 0));
+    if (damage <= 0 || !this.isAlive) return 0;
+    this.health = Math.max(0, this.health - damage);
+    this.hitFlash = Math.max(this.hitFlash, 0.18);
+    return damage;
   }
 
   applyGravity(dt) {
