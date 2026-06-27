@@ -291,9 +291,12 @@ export class CanvasRenderer {
       if (weapon?.visual?.parts) {
         this.drawWeaponProjectile(area, weapon);
       } else {
-        ctx.fillStyle = "rgba(0, 80, 255, 0.32)";
+        ctx.fillStyle = area.fillColor ?? "rgba(0, 80, 255, 0.32)";
+        ctx.strokeStyle = area.strokeColor ?? "rgba(120, 180, 255, 0.72)";
+        ctx.lineWidth = 2;
         for (const box of area.hitboxes ?? []) {
           ctx.fillRect(box.x, box.y, box.w, box.h);
+          ctx.strokeRect(box.x, box.y, box.w, box.h);
         }
       }
       ctx.restore();

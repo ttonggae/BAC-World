@@ -2540,9 +2540,12 @@ export class Game {
       skill1: this.input.isDown("KeyK"),
       skill2: this.input.isDown("KeyL"),
       movementSkill: this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
-      extra: this.input.isDown("Semicolon"),
+      extra:
+        localCharacterId === "inquisitor"
+          ? this.input.isDown("KeyB")
+          : this.input.isDown("Semicolon"),
       special:
-        localCharacterId === "fylang_character"
+        localCharacterId === "fylang_character" || localCharacterId === "hai_ht2"
           ? this.input.isDown("Space")
           : this.input.isDown("KeyN"),
     };
@@ -3634,10 +3637,18 @@ function inputsEqual(a, b) {
 }
 
 function getControlsForCharacter(baseControls, characterId) {
-  if (characterId === "fylang_character") {
+  if (characterId === "fylang_character" || characterId === "hai_ht2") {
     return {
       ...baseControls,
       special: "Space",
+    };
+  }
+  if (characterId === "inquisitor") {
+    return {
+      ...baseControls,
+      extra: "KeyB",
+      special: "KeyN",
+      movementSkill: baseControls.movementSkill ?? "ShiftLeft",
     };
   }
   return { ...baseControls };

@@ -25,6 +25,10 @@ export function useAbility(player, abilityId, context) {
     return false;
   }
 
+  if (ability.behavior === "recastDetonate") {
+    return useRecastDetonateAbility(player, ability, context);
+  }
+
   if (
     player.pendingAbility ||
     (player.cooldowns[abilityId] ?? 0) > 0 ||
@@ -79,6 +83,20 @@ export function useAbility(player, abilityId, context) {
     applyBuff(player, ability);
     player.skillFlash = ability.duration;
     player.guardFlash = ability.duration;
+    return true;
+  }
+
+  if (ability.type === "reload") {
+    if ((ability.startup ?? 0) > 0) {
+      beginPendingAbility(player, ability);
+    } else {
+      applyReload(player, ability);
+    }
+    player.skillFlash = (ability.startup ?? 0) + 0.16;
+    return true;
+  }
+
+  if (ability.type === "holdSprint") {
     return true;
   }
 
@@ -234,6 +252,12 @@ function releasePendingAbility(player, ability, context) {
     player.pendingAbility = null;
     return;
   }
+  if (ability.type === "reload") {
+    player.pendingAbility.released = true;
+    applyReload(player, ability);
+    player.pendingAbility = null;
+    return;
+  }
   if (ability.type === "areaHazard") {
     player.pendingAbility.released = true;
     releaseEditorAreaHazard(player, ability, context);
@@ -346,7 +370,7 @@ function fireEditorProjectile(player, ability, context) {
     h: hitbox.h,
     vx: projectile.speed * direction,
     vy: 0,
-    damage,
+    damage: projectile.contactDamage ?? damage,
     knockback: {
       x: ability.knockback.x * direction,
       y: ability.knockback.y,
@@ -359,6 +383,7 @@ function fireEditorProjectile(player, ability, context) {
     screenShake: ability.screenShake,
     destroyOnHit: projectile.destroyOnHit,
     destroyOnWall: projectile.destroyOnWall,
+    manualDetonate: Boolean(projectile.manualDetonate),
     pierce: projectile.pierce,
     speed: projectile.speed,
     homing: projectile.homing ? { ...projectile.homing } : null,
@@ -372,6 +397,144 @@ function fireEditorProjectile(player, ability, context) {
     facing: direction,
   });
   consumeModeSwapBonus(player, ability);
+}
+
+function useRecastDetonateAbility(player, ability, context) {
+  const activeProjectile = findManualProjectile(player, ability, context);
+  if (activeProjectile) {
+    detonateEditorProjectile(player, ability, activeProjectile, context);
+    player.cooldowns[ability.id] = ability.cooldown ?? 0;
+    if (ability.editorAction) {
+      player.cooldownTicks[ability.id] = ability.cooldownTicks ?? 0;
+    }
+    player.skillFlash = 0.16;
+    pushUseEffect(player, ability, context);
+    return true;
+  }
+
+  if (
+    player.pendingAbility ||
+    (player.cooldowns[ability.id] ?? 0) > 0 ||
+    (player.cooldownTicks[ability.id] ?? 0) > 0
+  ) {
+    return false;
+  }
+
+  if (!player.trySpendStamina(ability.staminaCost ?? 0)) {
+    return false;
+  }
+
+  if (ability.activeWeaponVisualId) {
+    player.actionWeaponVisualId = ability.activeWeaponVisualId;
+    player.actionWeaponVisualTicks =
+      (ability.startupTicks ?? 0) +
+      (ability.activeTicks ?? 0) +
+      (ability.recoveryTicks ?? 0);
+  }
+  pushUseEffect(player, ability, context);
+  if ((ability.startup ?? 0) > 0) {
+    beginPendingAbility(player, ability);
+  } else {
+    fireProjectile(player, ability, context);
+  }
+  player.skillFlash = (ability.startup ?? 0) + 0.16;
+  return true;
+}
+
+function findManualProjectile(player, ability, context) {
+  return context.combat.projectiles.find(
+    (projectile) =>
+      projectile.owner === player &&
+      projectile.abilityId === ability.id &&
+      projectile.manualDetonate &&
+      (Number.isInteger(projectile.lifeTicks)
+        ? projectile.lifeTicks > 0
+        : projectile.life > 0),
+  );
+}
+
+function detonateEditorProjectile(player, ability, projectile, context) {
+  projectile.life = 0;
+  projectile.lifeTicks = 0;
+  const detonation = ability.detonation ?? {};
+  const hitbox = detonation.hitbox;
+  const spawnTick = Number(context.simulationTick) || 0;
+  const centerX = projectile.x + projectile.w / 2;
+  const centerY = projectile.y + projectile.h / 2;
+  const attackInstanceId = `${player.playerIndex}_${ability.id}_detonate_${spawnTick}`;
+
+  if (hitbox) {
+    context.combat.spawnHitbox({
+      attackInstanceId,
+      owner: player,
+      abilityId: ability.id,
+      type: "areaAttack",
+      x: centerX + hitbox.x,
+      y: centerY + hitbox.y,
+      w: hitbox.w,
+      h: hitbox.h,
+      damage: detonation.damage ?? ability.damage ?? 0,
+      knockback: {
+        x: Math.abs(ability.knockback.x) * player.facing,
+        y: ability.knockback.y,
+      },
+      knockbackMode: "awayFromOwner",
+      effectType: detonation.effectType ?? ability.effectType,
+      screenShake: detonation.screenShake ?? ability.screenShake,
+      duration: detonation.durationTicks
+        ? detonation.durationTicks / (ability.tickRate ?? 60)
+        : ability.duration,
+      durationTicks: detonation.durationTicks ?? ability.activeTicks ?? 1,
+      tickRate: ability.tickRate,
+      stun: ability.stun,
+    });
+  }
+
+  if (ability.area?.hitbox) {
+    const areaBox = ability.area.hitbox;
+    context.combat.spawnArea({
+      id: `${player.playerIndex}_${ability.id}_area_${spawnTick}`,
+      areaInstanceId: `${player.playerIndex}_${ability.id}_area_${spawnTick}`,
+      owner: player,
+      abilityId: ability.id,
+      x: centerX + areaBox.x,
+      y: centerY + areaBox.y,
+      w: areaBox.w,
+      h: areaBox.h,
+      facing: player.facing,
+      hitboxes: [
+        {
+          x: centerX + areaBox.x,
+          y: centerY + areaBox.y,
+          w: areaBox.w,
+          h: areaBox.h,
+        },
+      ],
+      damage: ability.area.damage ?? ability.damage ?? 0,
+      knockback: {
+        x: Math.abs(ability.knockback.x) * player.facing,
+        y: ability.knockback.y,
+      },
+      durationTicks: ability.area.durationTicks,
+      damageIntervalTicks: ability.area.damageIntervalTicks,
+      tickRate: ability.tickRate,
+      visualWeaponId: ability.area.visualWeaponId,
+      fillColor: ability.area.fillColor,
+      strokeColor: ability.area.strokeColor,
+      effectType: ability.effectType,
+      screenShake: ability.screenShake,
+      stun: ability.stun,
+    });
+  }
+
+  consumeModeSwapBonus(player, ability);
+}
+
+function applyReload(player, ability) {
+  if (ability.reload?.restore === "full") {
+    player.stamina = player.maxStamina;
+    player.staminaRegenTimer = 0;
+  }
 }
 
 function applyStanceSwitch(player, ability) {
@@ -429,6 +592,8 @@ function releaseEditorAreaHazard(player, ability, context) {
     damageIntervalTicks: ability.area.damageIntervalTicks,
     tickRate: ability.tickRate,
     visualWeaponId: ability.area.visualWeaponId,
+    fillColor: ability.area.fillColor,
+    strokeColor: ability.area.strokeColor,
     effectType: ability.effectType,
     screenShake: ability.screenShake,
     stun: ability.stun,

@@ -146,6 +146,10 @@ export class CombatSystem {
         continue;
       }
 
+      if (projectile.manualDetonate) {
+        continue;
+      }
+
       for (const target of characters) {
         const targetId = getTargetId(target);
         if (

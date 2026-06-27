@@ -1,5 +1,6 @@
 import { horizontalOverlap } from "../core/AABB.js";
 import { updateAbilityState, useAbility } from "../abilities/AbilityBase.js";
+import { ABILITIES } from "../data/abilities.js";
 
 const DROP_THROUGH_TIME = 0.22;
 const GROUND_EPSILON = 5;
@@ -85,6 +86,7 @@ export class CharacterBase {
     this.dashTimer = 0;
     this.dashTicks = 0;
     this.dashStopOnEnd = false;
+    this.sustainedMoveSpeedBonus = 0;
     this.hitStun = 0;
     this.hitFlash = 0;
     this.attackFlash = 0;
@@ -119,6 +121,7 @@ export class CharacterBase {
       this.actionWeaponVisualId = null;
     }
     this.staminaFlash = Math.max(0, this.staminaFlash - dt);
+    this.sustainedMoveSpeedBonus = 0;
     this.dashTimer = Math.max(0, this.dashTimer - dt);
     const previousDashTicks = this.dashTicks;
     this.dashTicks = Math.max(0, this.dashTicks - 1);
@@ -154,6 +157,7 @@ export class CharacterBase {
 
   handleInput(dt, context, canControlMovement = true) {
     const input = context.input;
+    this.updateSustainedMovementSkill(dt, input, canControlMovement);
     if (canControlMovement) {
       const left = input.isDown(this.controls.left);
       const right = input.isDown(this.controls.right);
@@ -161,9 +165,12 @@ export class CharacterBase {
 
       if (direction !== 0) {
         this.facing = direction;
+        const moveSpeed =
+          this.movement.speed * this.getMoveSpeedMultiplier() +
+          this.sustainedMoveSpeedBonus;
         this.vx = moveToward(
           this.vx,
-          direction * this.movement.speed * this.getMoveSpeedMultiplier(),
+          direction * moveSpeed,
           this.movement.acceleration * dt,
         );
       } else {
@@ -186,7 +193,11 @@ export class CharacterBase {
       useAbility(this, this.abilities.skill2, context);
     }
 
-    if (input.wasPressed(this.controls.attack)) {
+    const basicAttack = ABILITIES[this.abilities.basicAttack];
+    const attackPressed = basicAttack?.behavior === "holdFire"
+      ? input.isDown(this.controls.attack)
+      : input.wasPressed(this.controls.attack);
+    if (attackPressed) {
       useAbility(this, this.abilities.basicAttack, context);
     }
 
@@ -200,7 +211,8 @@ export class CharacterBase {
 
     if (
       this.controls.movementSkill &&
-      input.wasPressed(this.controls.movementSkill)
+      input.wasPressed(this.controls.movementSkill) &&
+      ABILITIES[this.abilities.movementSkill]?.type !== "holdSprint"
     ) {
       useAbility(this, this.abilities.movementSkill, context);
     }
@@ -211,6 +223,27 @@ export class CharacterBase {
 
     if (this.controls.special && input.wasPressed(this.controls.special)) {
       useAbility(this, this.abilities.special, context);
+    }
+  }
+
+  updateSustainedMovementSkill(dt, input, canControlMovement) {
+    if (!canControlMovement || !this.controls.movementSkill) return;
+    if (!input.isDown(this.controls.movementSkill)) return;
+
+    const ability = ABILITIES[this.abilities.movementSkill];
+    if (ability?.type !== "holdSprint") return;
+
+    const costPerSecond = ability.sustainStaminaCostPerSecond ?? 0;
+    const cost = costPerSecond * dt;
+    if (cost > 0 && this.stamina <= 0) {
+      this.staminaFlash = Math.max(this.staminaFlash, 0.1);
+      return;
+    }
+
+    this.sustainedMoveSpeedBonus = ability.moveSpeedBonus ?? 0;
+    if (cost > 0) {
+      this.stamina = Math.max(0, this.stamina - Math.min(this.stamina, cost));
+      this.staminaRegenTimer = this.staminaRegenDelay;
     }
   }
 

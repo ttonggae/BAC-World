@@ -20,6 +20,17 @@ import {
   FYLANG_OTHER_IMAGE_DATA,
   FYLANG_WEAPON_DATA,
 } from "./editorFylang.js";
+import {
+  INQUISITOR_ACTION_DATA,
+  INQUISITOR_CHARACTER_DATA,
+  INQUISITOR_WEAPON_DATA,
+} from "./editorInquisitor.js";
+import {
+  HAI_HT2_ACTION_DATA,
+  HAI_HT2_CHARACTER_DATA,
+  HAI_HT2_OTHER_IMAGE_DATA,
+  HAI_HT2_WEAPON_DATA,
+} from "./editorHaiHt2.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -51,6 +62,20 @@ const DATA_SOURCES = [
     weapons: FYLANG_WEAPON_DATA,
     otherImages: FYLANG_OTHER_IMAGE_DATA,
     namespace: "fylang",
+  },
+  {
+    characters: INQUISITOR_CHARACTER_DATA,
+    actions: INQUISITOR_ACTION_DATA,
+    weapons: INQUISITOR_WEAPON_DATA,
+    otherImages: {},
+    namespace: "inquisitor",
+  },
+  {
+    characters: HAI_HT2_CHARACTER_DATA,
+    actions: HAI_HT2_ACTION_DATA,
+    weapons: HAI_HT2_WEAPON_DATA,
+    otherImages: HAI_HT2_OTHER_IMAGE_DATA,
+    namespace: "hai",
   },
 ];
 
@@ -186,12 +211,25 @@ export function adaptEditorActions() {
             area: action.area
               ? {
                   ...action.area,
+                  hitbox: action.area.hitbox ? { ...action.area.hitbox } : null,
                   visualWeaponId: getRuntimeId(
                     namespace,
                     action.area.visualWeaponId,
                   ),
                 }
               : null,
+            detonation: action.detonation
+              ? {
+                  ...action.detonation,
+                  hitbox: action.detonation.hitbox
+                    ? { ...action.detonation.hitbox }
+                    : null,
+                }
+              : null,
+            reload: action.reload ? { ...action.reload } : null,
+            moveSpeedBonus: action.moveSpeedBonus ?? 0,
+            sustainStaminaCostPerSecond:
+              action.sustainStaminaCostPerSecond ?? 0,
             effects: action.effects?.map((effect) => ({ ...effect })) ?? [],
             effectsImplemented: true,
             castLockTicks: action.lockActions
