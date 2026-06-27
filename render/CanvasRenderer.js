@@ -476,6 +476,18 @@ export class CanvasRenderer {
     const minY = weapon.preservePartOffsets
       ? 0
       : Math.min(...parts.map((part) => part.y));
+    const maxX = Math.max(...parts.map((part) => part.x + part.w));
+    const maxY = Math.max(...parts.map((part) => part.y + part.h));
+    const visualWidth = maxX - minX;
+    const visualHeight = maxY - minY;
+    const alignX =
+      weapon.projectileAlign === "center"
+        ? (projectile.w - visualWidth) / 2
+        : 0;
+    const alignY =
+      weapon.projectileAlign === "center"
+        ? (projectile.h - visualHeight) / 2
+        : 0;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(projectile.x, projectile.y);
@@ -483,6 +495,7 @@ export class CanvasRenderer {
       ctx.translate(projectile.w, 0);
       ctx.scale(-1, 1);
     }
+    ctx.translate(alignX, alignY);
     ctx.translate(-minX, -minY);
     this.drawVisualParts(parts);
     ctx.restore();
