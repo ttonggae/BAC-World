@@ -151,6 +151,17 @@
       <section id="gameStage" class="game-stage hidden" aria-label="BAC World game">
         <canvas id="gameCanvas" width="960" height="540"></canvas>
       </section>
+      <div id="networkStatusBanner" class="network-status-banner hidden" aria-live="polite"></div>
+      <section id="networkDisconnectModal" class="network-disconnect-modal hidden" aria-label="network disconnected">
+        <div class="network-disconnect-panel">
+          <h2>상대와의 연결이 끊겼습니다</h2>
+          <p>네트워크 상태 또는 브라우저 비활성화로 연결이 종료되었습니다.</p>
+          <div class="network-disconnect-actions">
+            <button id="networkBackToRoomButton" type="button">방으로 돌아가기</button>
+            <button id="networkBackToMainButton" type="button">메인으로</button>
+          </div>
+        </div>
+      </section>
       <section id="controlsPanel" class="controls hidden" aria-label="controls">
       </section>
       <section id="onlineDebugPanel" class="online-debug hidden" aria-label="online debug">

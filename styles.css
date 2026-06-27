@@ -551,6 +551,81 @@ canvas {
   height: 100%;
 }
 
+.network-status-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 9999;
+  transform: translateX(-50%);
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+  pointer-events: none;
+}
+
+.network-status-banner.unstable,
+.network-status-banner.remote_hidden {
+  background: rgba(64, 67, 74, 0.82);
+}
+
+.network-status-banner.reconnecting {
+  background: rgba(120, 80, 0, 0.82);
+}
+
+.network-status-banner.disconnected {
+  background: rgba(120, 0, 0, 0.86);
+}
+
+.network-disconnect-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.52);
+}
+
+.network-disconnect-panel {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(18, 22, 28, 0.94);
+  text-align: center;
+}
+
+.network-disconnect-panel h2,
+.network-disconnect-panel p {
+  margin: 0;
+}
+
+.network-disconnect-panel p {
+  color: #c8d0dc;
+}
+
+.network-disconnect-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.network-disconnect-actions button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #eef2f6;
+  color: #15181d;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .controls {
   position: absolute;
   left: 12px;

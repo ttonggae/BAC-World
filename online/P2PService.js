@@ -13,6 +13,8 @@ const RTC_CONFIG = {
     { urls: "stun:stun.l.google.com:19302" },
   ],
 };
+const MAX_BUFFERED_AMOUNT = 256 * 1024;
+const BUFFER_LOW_AMOUNT = 64 * 1024;
 
 function serializeDescription(description) {
   return {
@@ -61,6 +63,7 @@ export class P2PService {
     onLog,
     onError,
     onDataMessage,
+    onMetrics,
   }) {
     this.roomCode = roomCode;
     this.localPlayerId = localPlayerId;
@@ -70,12 +73,25 @@ export class P2PService {
     this.onLog = onLog;
     this.onError = onError;
     this.onDataMessage = onDataMessage;
+    this.onMetrics = onMetrics;
     this.peer = null;
     this.channel = null;
     this.unsubscribe = null;
     this.remoteDescriptionSet = false;
     this.processedCandidates = new Set();
     this.signalQueue = Promise.resolve();
+    this.metrics = {
+      connectionState: "new",
+      iceConnectionState: "new",
+      signalingState: "stable",
+      dataChannelState: "closed",
+      bufferedAmount: 0,
+      lastPacketAt: 0,
+      lastPingAt: 0,
+      lastPongAt: 0,
+      droppedSendCount: 0,
+      failedSendCount: 0,
+    };
   }
 
   get isHost() {
@@ -134,17 +150,33 @@ export class P2PService {
     };
     this.peer.onconnectionstatechange = () => {
       const state = this.peer?.connectionState ?? "closed";
+      this.metrics.connectionState = state;
+      this.emitMetrics();
       if (state === "connected") {
         this.setStatus("connected");
         setWebrtcStatus(this.roomCode, "connected").catch(() => {});
       } else if (state === "failed") {
         this.setStatus("failed");
-      } else if (state === "closed" || state === "disconnected") {
+      } else if (state === "disconnected") {
+        this.setStatus("unstable");
+      } else if (state === "closed") {
         this.setStatus(state);
       }
     };
     this.peer.oniceconnectionstatechange = () => {
-      this.log(`ICE: ${this.peer?.iceConnectionState ?? "closed"}`);
+      const state = this.peer?.iceConnectionState ?? "closed";
+      this.metrics.iceConnectionState = state;
+      this.emitMetrics();
+      this.log(`ICE: ${state}`);
+      if (state === "disconnected") {
+        this.setStatus("unstable");
+      } else if (state === "failed") {
+        this.setStatus("failed");
+      }
+    };
+    this.peer.onsignalingstatechange = () => {
+      this.metrics.signalingState = this.peer?.signalingState ?? "closed";
+      this.emitMetrics();
     };
   }
 
@@ -204,22 +236,27 @@ export class P2PService {
   }
 
   bindDataChannel(channel) {
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_AMOUNT;
     channel.onopen = () => {
       this.setChannelState(channel.readyState);
       this.setStatus("connected");
+      this.updateBufferedAmount();
       this.log("DataChannel open.");
     };
     channel.onclose = () => {
       this.setChannelState(channel.readyState);
       this.setStatus("closed");
+      this.updateBufferedAmount();
       this.log("DataChannel closed.");
     };
     channel.onerror = (event) => {
       this.setChannelState(channel.readyState);
       this.fail("DataChannel error.", event.error ?? event);
     };
+    channel.onbufferedamountlow = () => this.updateBufferedAmount();
     channel.onmessage = (event) => this.handleMessage(event.data);
     this.setChannelState(channel.readyState);
+    this.updateBufferedAmount();
   }
 
   handleMessage(raw) {
@@ -238,40 +275,62 @@ export class P2PService {
       message.type !== "lockstepReady" &&
       message.type !== "lockstepReadyAck" &&
       message.type !== "netcodeConfig" &&
+      message.type !== "visibility" &&
       message.type !== "debug" &&
       message.type !== "ping" &&
       message.type !== "pong"
     ) {
       this.log(`Received ${message.type ?? "message"}.`);
     }
+    this.metrics.lastPacketAt = Date.now();
     if (message.type === "ping") {
+      this.metrics.lastPingAt = Date.now();
       this.send({
         type: "pong",
         time: message.time,
         respondedAt: Date.now(),
         from: this.localPlayerId,
-      });
+      }, { critical: true });
+    } else if (message.type === "pong") {
+      this.metrics.lastPongAt = Date.now();
     }
+    this.emitMetrics();
     if (this.onDataMessage) {
       this.onDataMessage(message);
     }
   }
 
   sendPing() {
+    this.metrics.lastPingAt = Date.now();
     this.send({
       type: "ping",
       time: Date.now(),
       from: this.localPlayerId,
-    });
+    }, { critical: true });
     this.log("Sent ping.");
   }
 
-  send(message) {
+  send(message, options = {}) {
     if (!this.channel || this.channel.readyState !== "open") {
-      this.log("DataChannel is not open.");
-      return;
+      if (options.critical) this.log("DataChannel is not open.");
+      return false;
     }
-    this.channel.send(JSON.stringify(message));
+    this.updateBufferedAmount();
+    if (this.channel.bufferedAmount > MAX_BUFFERED_AMOUNT && !options.critical) {
+      this.metrics.droppedSendCount += 1;
+      this.emitMetrics();
+      return false;
+    }
+    try {
+      this.channel.send(JSON.stringify(message));
+      this.updateBufferedAmount();
+      return true;
+    } catch (error) {
+      this.metrics.failedSendCount += 1;
+      this.emitMetrics();
+      this.fail("DataChannel send failed.", error);
+      return false;
+    }
   }
 
   async disconnect({ resetSignal = false } = {}) {
@@ -305,6 +364,8 @@ export class P2PService {
   }
 
   setChannelState(state) {
+    this.metrics.dataChannelState = state;
+    this.emitMetrics();
     if (this.onChannelState) this.onChannelState(state);
   }
 
@@ -315,5 +376,23 @@ export class P2PService {
   fail(message, error) {
     console.error(message, error);
     if (this.onError) this.onError(`${message} ${error?.message ?? ""}`.trim());
+  }
+
+  updateBufferedAmount() {
+    this.metrics.bufferedAmount = this.channel?.bufferedAmount ?? 0;
+    this.emitMetrics();
+  }
+
+  getBufferedAmount() {
+    return this.channel?.bufferedAmount ?? 0;
+  }
+
+  getMetrics() {
+    this.updateBufferedAmount();
+    return { ...this.metrics };
+  }
+
+  emitMetrics() {
+    if (this.onMetrics) this.onMetrics({ ...this.metrics });
   }
 }

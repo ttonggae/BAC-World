@@ -9,6 +9,12 @@ let firebaseStatus = "Firebase config is missing.";
 let firestoreDb = null;
 let firebaseApi = null;
 let initPromise = null;
+let lastRoomCleanupAt = 0;
+
+const WAITING_ROOM_TTL_MS = 20 * 60 * 1000;
+const PLAYING_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
+const ENDED_ROOM_TTL_MS = 60 * 1000;
+const ROOM_CLEANUP_THROTTLE_MS = 60 * 1000;
 
 function hasFirebaseConfig() {
   return Boolean(
@@ -32,12 +38,15 @@ async function loadFirebaseApi() {
     getFirestore: firestore.getFirestore,
     doc: firestore.doc,
     getDoc: firestore.getDoc,
+    getDocs: firestore.getDocs,
     setDoc: firestore.setDoc,
     updateDoc: firestore.updateDoc,
+    deleteDoc: firestore.deleteDoc,
     onSnapshot: firestore.onSnapshot,
     serverTimestamp: firestore.serverTimestamp,
     deleteField: firestore.deleteField,
     arrayUnion: firestore.arrayUnion,
+    collection: firestore.collection,
   };
   return firebaseApi;
 }
@@ -117,6 +126,10 @@ function roomRef(roomCode) {
   return firebaseApi.doc(firestoreDb, "rooms", roomCode);
 }
 
+function roomsCollectionRef() {
+  return firebaseApi.collection(firestoreDb, "rooms");
+}
+
 function normalizeRoomCode(roomCode) {
   return String(roomCode ?? "")
     .trim()
@@ -135,7 +148,58 @@ function makePlayer({ playerId, slot, name, isHost }) {
     locked: false,
     ready: false,
     joinedAt: firebaseApi.serverTimestamp(),
+    lastSeenAt: firebaseApi.serverTimestamp(),
+    connected: true,
   };
+}
+
+function getRoomExpiresAt(status, now = Date.now()) {
+  if (status === "onlinePlaying" || status === "playing" || status === "preMatchPreview") {
+    return now + PLAYING_ROOM_TTL_MS;
+  }
+  if (status === "ended" || status === "closed") {
+    return now + ENDED_ROOM_TTL_MS;
+  }
+  return now + WAITING_ROOM_TTL_MS;
+}
+
+function timestampToMillis(value) {
+  if (typeof value === "number") return value;
+  if (value instanceof Date) return value.getTime();
+  if (value && typeof value.toMillis === "function") return value.toMillis();
+  if (value && typeof value.seconds === "number") {
+    return value.seconds * 1000 + Math.floor((value.nanoseconds ?? 0) / 1000000);
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function getPlayerCount(players = {}) {
+  return Object.values(players).filter(Boolean).length;
+}
+
+function isExpiredRoom(room, now = Date.now()) {
+  const expiresAt = timestampToMillis(room.expiresAt);
+  const createdAt = timestampToMillis(room.createdAt);
+  const updatedAt = timestampToMillis(room.updatedAt);
+  const playerCount = getPlayerCount(room.players);
+  const status = room.status ?? "lobby";
+
+  if (playerCount === 0) return true;
+  if (status === "ended" || status === "closed") {
+    return expiresAt ? expiresAt < now : true;
+  }
+  if (expiresAt && expiresAt < now) return true;
+  if ((status === "lobby" || status === "characterSelect" || status === "mapSelect") && createdAt) {
+    return now - createdAt > WAITING_ROOM_TTL_MS;
+  }
+  if ((status === "onlinePlaying" || status === "playing" || status === "preMatchPreview") && createdAt) {
+    return now - createdAt > PLAYING_ROOM_TTL_MS;
+  }
+  if (updatedAt) {
+    return now - updatedAt > PLAYING_ROOM_TTL_MS;
+  }
+  return false;
 }
 
 function createInitialWebrtcState() {
@@ -150,12 +214,20 @@ function createInitialWebrtcState() {
 
 export async function createOnlineRoom({ playerId, playerName = "Player 1" }) {
   assertReady();
+  await cleanupOldRoomsThrottled();
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const code = generateRoomCode();
     const ref = roomRef(code);
     const existing = await firebaseApi.getDoc(ref);
-    if (existing.exists()) continue;
+    if (existing.exists()) {
+      const existingRoom = existing.data();
+      if (isExpiredRoom(existingRoom)) {
+        await firebaseApi.deleteDoc(ref);
+      } else {
+        continue;
+      }
+    }
 
     const room = {
       code,
@@ -164,6 +236,7 @@ export async function createOnlineRoom({ playerId, playerName = "Player 1" }) {
       hostId: playerId,
       createdAt: firebaseApi.serverTimestamp(),
       updatedAt: firebaseApi.serverTimestamp(),
+      expiresAt: getRoomExpiresAt("lobby"),
       players: {
         p1: makePlayer({
           playerId,
@@ -185,6 +258,7 @@ export async function createOnlineRoom({ playerId, playerName = "Player 1" }) {
 
 export async function joinOnlineRoom(roomCode, { playerId, playerName = "Player 2" }) {
   assertReady();
+  await cleanupOldRoomsThrottled();
 
   const code = normalizeRoomCode(roomCode);
   const ref = roomRef(code);
@@ -194,6 +268,10 @@ export async function joinOnlineRoom(roomCode, { playerId, playerName = "Player 
   }
 
   const room = snapshot.data();
+  if (isExpiredRoom(room)) {
+    await firebaseApi.deleteDoc(ref);
+    throw new Error("Room expired.");
+  }
   if (room.status === "closed") {
     throw new Error("Room is closed.");
   }
@@ -213,6 +291,7 @@ export async function joinOnlineRoom(roomCode, { playerId, playerName = "Player 
       isHost: room.hostId === playerId || (!players.p1 && slot === "p1"),
     }),
     updatedAt: firebaseApi.serverTimestamp(),
+    expiresAt: getRoomExpiresAt(room.status ?? "lobby"),
   });
 
   return { roomCode: code, slot, room: { ...room, code } };
@@ -244,6 +323,7 @@ export async function updateRoomPlayer(roomCode, slot, data) {
     updates[`players.${slot}.${key}`] = value;
   }
   updates.updatedAt = firebaseApi.serverTimestamp();
+  updates.expiresAt = getRoomExpiresAt("lobby");
   await firebaseApi.updateDoc(roomRef(normalizeRoomCode(roomCode)), updates);
 }
 
@@ -261,6 +341,7 @@ export async function setRoomMode(roomCode, mode) {
     mode,
     status: "lobby",
     updatedAt: firebaseApi.serverTimestamp(),
+    expiresAt: getRoomExpiresAt("lobby"),
   });
 }
 
@@ -270,6 +351,7 @@ export async function setRoomStatus(roomCode, status, extra = {}) {
     status,
     ...extra,
     updatedAt: firebaseApi.serverTimestamp(),
+    expiresAt: getRoomExpiresAt(status),
   });
 }
 
@@ -278,6 +360,7 @@ export async function setRoomSelectedMap(roomCode, selectedMapId) {
   await firebaseApi.updateDoc(roomRef(normalizeRoomCode(roomCode)), {
     selectedMapId,
     updatedAt: firebaseApi.serverTimestamp(),
+    expiresAt: getRoomExpiresAt("lobby"),
   });
 }
 
@@ -332,18 +415,75 @@ export async function setWebrtcStatus(roomCode, status) {
 export async function leaveOnlineRoom(roomCode, slot, { isHost = false } = {}) {
   assertReady();
   const code = normalizeRoomCode(roomCode);
-  const updates = {
+  const ref = roomRef(code);
+  const snapshot = await firebaseApi.getDoc(ref);
+  if (!snapshot.exists()) return;
+
+  const room = snapshot.data();
+  const playersAfterLeave = { ...(room.players ?? {}) };
+  delete playersAfterLeave[slot];
+  if (isHost || getPlayerCount(playersAfterLeave) === 0) {
+    await firebaseApi.deleteDoc(ref);
+    return;
+  }
+
+  await firebaseApi.updateDoc(ref, {
     [`players.${slot}`]: firebaseApi.deleteField(),
     updatedAt: firebaseApi.serverTimestamp(),
-  };
-  if (isHost) {
-    updates.status = "closed";
-  }
-  await firebaseApi.updateDoc(roomRef(code), updates);
+    expiresAt: getRoomExpiresAt(room.status ?? "lobby"),
+  });
 }
 
 export function cleanupRoomListener(unsubscribe) {
   if (typeof unsubscribe === "function") {
     unsubscribe();
   }
+}
+
+export async function updatePlayerPresence(roomCode, slot) {
+  assertReady();
+  const code = normalizeRoomCode(roomCode);
+  await firebaseApi.updateDoc(roomRef(code), {
+    [`players.${slot}.lastSeenAt`]: firebaseApi.serverTimestamp(),
+    [`players.${slot}.connected`]: true,
+    updatedAt: firebaseApi.serverTimestamp(),
+  });
+}
+
+export async function endOnlineRoom(roomCode) {
+  assertReady();
+  const code = normalizeRoomCode(roomCode);
+  await firebaseApi.updateDoc(roomRef(code), {
+    status: "ended",
+    updatedAt: firebaseApi.serverTimestamp(),
+    expiresAt: getRoomExpiresAt("ended"),
+  });
+}
+
+export async function cleanupOldRooms({ force = false } = {}) {
+  assertReady();
+  const now = Date.now();
+  if (!force && now - lastRoomCleanupAt < ROOM_CLEANUP_THROTTLE_MS) {
+    return [];
+  }
+  lastRoomCleanupAt = now;
+
+  const snapshot = await firebaseApi.getDocs(roomsCollectionRef());
+  const deletes = [];
+  snapshot.forEach((docSnapshot) => {
+    const room = docSnapshot.data();
+    if (isExpiredRoom(room, now)) {
+      deletes.push(docSnapshot.id);
+    }
+  });
+
+  await Promise.all(deletes.map((code) => firebaseApi.deleteDoc(roomRef(code))));
+  if (deletes.length > 0) {
+    console.info("[ROOM CLEANUP] deleted rooms:", deletes);
+  }
+  return deletes;
+}
+
+export async function cleanupOldRoomsThrottled() {
+  return cleanupOldRooms({ force: false });
 }

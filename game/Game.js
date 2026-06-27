@@ -7,7 +7,9 @@ import { GameMap } from "../map/Map.js";
 import { CanvasRenderer } from "../render/CanvasRenderer.js";
 import {
   cleanupRoomListener,
+  cleanupOldRoomsThrottled,
   createOnlineRoom,
+  endOnlineRoom,
   generateRoomCode as generateOnlineRoomCode,
   getFirebaseStatus,
   getLocalPlayerId,
@@ -21,6 +23,7 @@ import {
   setRoomSelectedMap,
   setRoomStatus,
   updateRoomPlayer,
+  updatePlayerPresence,
 } from "../online/FirebaseService.js";
 import { P2PService } from "../online/P2PService.js";
 import { OfflineMatch } from "./OfflineMatch.js";
@@ -91,6 +94,13 @@ const NETCODE_CONFIG = Object.freeze({
   checksumInterval: 30,
   inputBundleSize: 6,
 });
+const HEARTBEAT_INTERVAL_MS = 1000;
+const VISIBLE_SOFT_TIMEOUT_MS = 8000;
+const VISIBLE_HARD_TIMEOUT_MS = 30000;
+const HIDDEN_HARD_TIMEOUT_MS = 45000;
+const REMOTE_INPUT_LAST_KNOWN_TICKS = 6;
+const LATE_INPUT_WARN_INTERVAL_MS = 1000;
+const NETWORK_BUFFER_WARNING_AMOUNT = 128 * 1024;
 const FIXED_DT = 1 / NETCODE_CONFIG.tickRate;
 
 export class Game {
@@ -103,11 +113,13 @@ export class Game {
     this.firebaseReady = false;
     this.firebaseStatus = getFirebaseStatus();
     this.roomUnsubscribe = null;
+    this.roomPresenceTimer = null;
     this.p2pService = null;
     this.p2pStatus = "idle";
     this.p2pChannelState = "closed";
     this.p2pConnectPromise = null;
     this.p2pLastConnectAttempt = 0;
+    this.p2pMetrics = null;
     this.p2pLogs = [];
     this.onlineRole = null;
     this.onlineTick = 0;
@@ -147,6 +159,27 @@ export class Game {
     this.pingSamples = [];
     this.averagePing = null;
     this.lastPingSentTick = 0;
+    this.onlineLastPingAt = 0;
+    this.onlineLastPacketAt = 0;
+    this.onlineLastPongAt = 0;
+    this.onlineNetworkStatus = "idle";
+    this.networkStatus = {
+      level: "connected",
+      message: "",
+      sinceMs: 0,
+      hardDisconnected: false,
+    };
+    this.heartbeatMissCount = 0;
+    this.lastNetworkWarnAt = 0;
+    this.lastLateInputWarnAt = 0;
+    this.lateInputDropCount = 0;
+    this.predictedInputTicks = 0;
+    this.predictionActiveUntilMs = 0;
+    this.reconnectStartedAt = 0;
+    this.localHidden = document.hidden;
+    this.remoteHidden = false;
+    this.windowHasFocus = typeof document.hasFocus === "function" ? document.hasFocus() : true;
+    this.forceLocalInputNeutral = false;
     this.onlinePeerReady = false;
     this.onlineReadyAcknowledged = false;
     this.onlineReadySent = false;
@@ -172,6 +205,10 @@ export class Game {
     this.renderCharacterSelect();
     this.syncUi();
     this.initializeOnline();
+    document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
+    window.addEventListener("blur", () => this.handleWindowBlur());
+    window.addEventListener("focus", () => this.handleWindowFocus());
+    window.addEventListener("pagehide", () => this.handlePageHide());
     this.loop = new GameLoop({
       update: (dt) => this.update(dt),
       render: () => this.render(),
@@ -242,6 +279,10 @@ export class Game {
       onlineRollbackWindowSelect: document.querySelector("#onlineRollbackWindowSelect"),
       showNetworkDebugToggle: document.querySelector("#showNetworkDebugToggle"),
       rollbackLogList: document.querySelector("#rollbackLogList"),
+      networkStatusBanner: document.querySelector("#networkStatusBanner"),
+      networkDisconnectModal: document.querySelector("#networkDisconnectModal"),
+      networkBackToRoomButton: document.querySelector("#networkBackToRoomButton"),
+      networkBackToMainButton: document.querySelector("#networkBackToMainButton"),
       gameStage: document.querySelector("#gameStage"),
       controlsPanel: document.querySelector("#controlsPanel"),
       gameOverActions: document.querySelector("#gameOverActions"),
@@ -286,6 +327,8 @@ export class Game {
     ui.restartMatchButton.addEventListener("click", () => this.restartSameMatch());
     ui.backToSelectButton.addEventListener("click", () => this.returnToCharacterSelect());
     ui.backToRoomLobbyButton.addEventListener("click", () => this.returnOnlineRoomToLobby());
+    ui.networkBackToRoomButton.addEventListener("click", () => this.returnOnlineRoomToLobby());
+    ui.networkBackToMainButton.addEventListener("click", () => this.leaveCurrentRoom());
     return ui;
   }
 
@@ -391,12 +434,14 @@ export class Game {
       matchConfig: null,
       previewStartedAt: null,
       previewEndAt: null,
+      roomEndMarked: false,
       createdAt: type ? Date.now() : null,
     };
   }
 
   resetSession() {
     this.cleanupRoomListener();
+    this.stopRoomPresenceHeartbeat();
     this.cleanupP2P();
     this.p2pLogs = [];
     this.currentSession = this.createSession(null);
@@ -457,6 +502,39 @@ export class Game {
     this.roomUnsubscribe = null;
   }
 
+  startRoomPresenceHeartbeat() {
+    this.stopRoomPresenceHeartbeat();
+    if (
+      !this.currentSession?.online ||
+      !this.currentSession.roomCode ||
+      !this.currentSession.localSlot ||
+      !isFirebaseReady()
+    ) {
+      return;
+    }
+    const sendPresence = () => {
+      if (
+        !this.currentSession?.online ||
+        !this.currentSession.roomCode ||
+        !this.currentSession.localSlot ||
+        !isFirebaseReady()
+      ) {
+        return;
+      }
+      updatePlayerPresence(this.currentSession.roomCode, this.currentSession.localSlot)
+        .catch((error) => console.warn("Room presence update failed", error));
+    };
+    sendPresence();
+    this.roomPresenceTimer = window.setInterval(sendPresence, 5000);
+  }
+
+  stopRoomPresenceHeartbeat() {
+    if (this.roomPresenceTimer) {
+      window.clearInterval(this.roomPresenceTimer);
+      this.roomPresenceTimer = null;
+    }
+  }
+
   getRoomPlayersArray(players = {}) {
     return ["p1", "p2"]
       .map((slot) => players[slot])
@@ -467,6 +545,7 @@ export class Game {
     if (!room) {
       this.showRoomMessage("Room was closed or removed.");
       this.cleanupRoomListener();
+      this.stopRoomPresenceHeartbeat();
       return;
     }
 
@@ -521,6 +600,7 @@ export class Game {
     if (!this.currentSession?.online || this.currentSession.mode !== "pvpRoom") return;
 
     if (room.status === "closed") {
+      this.stopRoomPresenceHeartbeat();
       this.goToMainMenu();
       return;
     }
@@ -700,8 +780,60 @@ export class Game {
     }
     this.p2pStatus = "idle";
     this.p2pChannelState = "closed";
+    this.p2pMetrics = null;
     this.p2pConnectPromise = null;
     this.p2pLastConnectAttempt = 0;
+  }
+
+  handleVisibilityChange() {
+    this.localHidden = document.hidden;
+    if (document.hidden) {
+      this.input.reset();
+      this.forceLocalInputNeutral = true;
+      this.addP2PLog("Window hidden: local input forced neutral.");
+    } else {
+      this.input.reset();
+      this.forceLocalInputNeutral = false;
+      this.addP2PLog("Window visible: input resumed.");
+    }
+    this.sendVisibilityState();
+    this.syncOnlineDebugText();
+  }
+
+  handleWindowBlur() {
+    this.windowHasFocus = false;
+    this.input.reset();
+    this.forceLocalInputNeutral = true;
+    this.syncOnlineDebugText();
+  }
+
+  handleWindowFocus() {
+    this.windowHasFocus = true;
+    if (!document.hidden) {
+      this.input.reset();
+      this.forceLocalInputNeutral = false;
+    }
+    this.syncOnlineDebugText();
+  }
+
+  handlePageHide() {
+    const session = this.currentSession;
+    this.stopRoomPresenceHeartbeat();
+    if (session?.online && session.roomCode && session.localSlot && isFirebaseReady()) {
+      leaveOnlineRoom(session.roomCode, session.localSlot, {
+        isHost: this.isLocalHost(),
+      }).catch(() => {});
+    }
+  }
+
+  sendVisibilityState() {
+    if (this.p2pChannelState !== "open") return;
+    this.p2pService?.send({
+      type: "visibility",
+      hidden: this.localHidden,
+      atTick: this.onlineTick,
+      from: this.localPlayerId,
+    }, { critical: false });
   }
 
   async connectP2P() {
@@ -751,6 +883,16 @@ export class Game {
         onError: (message) => {
           this.p2pStatus = "failed";
           this.addP2PLog(message);
+        },
+        onMetrics: (metrics) => {
+          this.p2pMetrics = metrics;
+          this.onlineLastPacketAt = Math.max(this.onlineLastPacketAt, metrics.lastPacketAt || 0);
+          if (this.gameState === "roomLobby") {
+            this.renderP2PPanel();
+          }
+          if (this.gameState === "onlinePlaying" || this.gameState === "onlineConnectionLost") {
+            this.syncOnlineDebugText();
+          }
         },
         onDataMessage: (message) => this.handleP2PDataMessage(message),
       });
@@ -945,6 +1087,7 @@ export class Game {
 
     this.ui.joinRoomMessage.textContent = "Joining room...";
     try {
+      await cleanupOldRoomsThrottled();
       const result = await joinOnlineRoom(code, {
         playerId: this.localPlayerId,
         playerName: "Player 2",
@@ -961,6 +1104,7 @@ export class Game {
       this.currentMode = null;
       this.gameState = "roomLobby";
       this.listenToCurrentRoom();
+      this.startRoomPresenceHeartbeat();
       this.renderRoomLobby();
       this.input.reset();
       this.syncUi();
@@ -1025,6 +1169,7 @@ export class Game {
     await this.refreshFirebaseStatus();
     if (isFirebaseReady()) {
       try {
+        await cleanupOldRoomsThrottled();
         const result = await createOnlineRoom({
           playerId: this.localPlayerId,
           playerName: "Player 1",
@@ -1039,6 +1184,7 @@ export class Game {
         this.currentSession.players = this.getRoomPlayersArray(result.room.players ?? {});
         this.currentRoom = this.currentSession;
         this.listenToCurrentRoom();
+        this.startRoomPresenceHeartbeat();
       } catch (error) {
         this.createRoomSession();
         this.showRoomMessage(error.message || "Online room creation failed. Using local room.");
@@ -1176,9 +1322,13 @@ export class Game {
         isFirebaseReady(),
     );
 
+    const metrics = this.p2pMetrics;
+    const bufferedAmount = metrics?.bufferedAmount ?? this.p2pService?.getBufferedAmount?.() ?? 0;
     this.ui.p2pStatusText.textContent = `P2P Status: ${this.p2pStatus}`;
     this.ui.p2pRoleText.textContent = `Local Role: ${role}`;
-    this.ui.p2pChannelText.textContent = `DataChannel: ${this.p2pChannelState}`;
+    this.ui.p2pChannelText.textContent =
+      `DataChannel: ${this.p2pChannelState} / ICE: ${metrics?.iceConnectionState ?? "-"} / ` +
+      `Buffer: ${formatBytes(bufferedAmount)}`;
     this.ui.p2pHintText.textContent = this.currentSession?.online
       ? hasBothPlayers
         ? "Signaling uses Firestore. TURN is not configured."
@@ -1221,6 +1371,7 @@ export class Game {
 
   async leaveCurrentRoom() {
     const session = this.currentSession;
+    this.stopRoomPresenceHeartbeat();
     if (session?.online && session.roomCode && session.localSlot && isFirebaseReady()) {
       try {
         await leaveOnlineRoom(session.roomCode, session.localSlot, {
@@ -1256,6 +1407,20 @@ export class Game {
     this.gameState = "roomLobby";
     this.renderRoomLobby();
     this.syncUi();
+  }
+
+  markOnlineRoomEnded() {
+    if (
+      !this.currentSession?.online ||
+      !this.currentSession.roomCode ||
+      this.currentSession.roomEndMarked ||
+      !isFirebaseReady()
+    ) {
+      return;
+    }
+    this.currentSession.roomEndMarked = true;
+    endOnlineRoom(this.currentSession.roomCode)
+      .catch((error) => console.warn("End online room failed", error));
   }
 
   leaveCharacterSelect() {
@@ -1376,7 +1541,7 @@ export class Game {
       this.p2pService?.send({
         type: "matchStart",
         matchConfig,
-      });
+      }, { critical: true });
     } catch (error) {
       this.showSelectionMessage(error.message || "Could not start preview.");
     }
@@ -1569,6 +1734,20 @@ export class Game {
       this.pingSamples = [];
       this.averagePing = null;
       this.lastPingSentTick = 0;
+      this.onlineLastPingAt = 0;
+      this.onlineLastPacketAt = Date.now();
+      this.onlineLastPongAt = Date.now();
+      this.onlineNetworkStatus = "OK";
+      this.setNetworkStatus("connected", "", false);
+      this.heartbeatMissCount = 0;
+      this.lastNetworkWarnAt = 0;
+      this.lastLateInputWarnAt = 0;
+      this.lateInputDropCount = 0;
+      this.predictedInputTicks = 0;
+      this.predictionActiveUntilMs = 0;
+      this.reconnectStartedAt = 0;
+      this.remoteHidden = false;
+      this.forceLocalInputNeutral = document.hidden || !this.windowHasFocus;
       this.onlinePhase = "syncing";
       this.resetMatch();
       this.match = this.createOnlineMatch();
@@ -1653,9 +1832,12 @@ export class Game {
 
   updateOnlineBattle() {
     if (!this.match) return;
-    if (this.p2pChannelState !== "open") {
+    this.updateOnlineNetworkHealth();
+    if (this.shouldHardDisconnectOnline()) {
       this.onlinePhase = "connectionLost";
       this.gameState = "onlineConnectionLost";
+      this.markOnlineRoomEnded();
+      this.updateNetworkStatus();
       this.syncUi();
       return;
     }
@@ -1674,15 +1856,182 @@ export class Game {
     this.scheduleLocalInput();
     this.updateOnlineGameTick(this.onlineTick);
     this.onlineTick += 1;
-    if (this.onlineTick - this.lastPingSentTick >= NETCODE_CONFIG.tickRate * 2) {
-      this.lastPingSentTick = this.onlineTick;
-      this.p2pService?.send({
-        type: "ping",
-        time: Date.now(),
-        from: this.localPlayerId,
-      });
-    }
+    this.sendOnlineHeartbeatIfDue();
     this.syncOnlineDebugText();
+  }
+
+  sendOnlineHeartbeatIfDue() {
+    const now = Date.now();
+    if (now - this.onlineLastPingAt < HEARTBEAT_INTERVAL_MS) return;
+    this.lastPingSentTick = this.onlineTick;
+    this.onlineLastPingAt = now;
+    this.p2pService?.send({
+      type: "ping",
+      time: now,
+      from: this.localPlayerId,
+    }, { critical: true });
+  }
+
+  updateOnlineNetworkHealth() {
+    const now = Date.now();
+    const metrics = this.p2pMetrics;
+    const lastPacketAt = Math.max(this.onlineLastPacketAt || 0, metrics?.lastPacketAt || 0);
+    const lastPacketAge = lastPacketAt ? now - lastPacketAt : 0;
+    const hardTimeout = this.localHidden || this.remoteHidden
+      ? HIDDEN_HARD_TIMEOUT_MS
+      : VISIBLE_HARD_TIMEOUT_MS;
+
+    if (this.p2pStatus === "failed" || metrics?.connectionState === "failed" || metrics?.iceConnectionState === "failed") {
+      this.onlineNetworkStatus = "hard-failed";
+      this.updateNetworkStatus();
+      return;
+    }
+    if (this.p2pChannelState === "closing" || this.p2pChannelState === "closed") {
+      this.onlineNetworkStatus = "closed";
+      this.updateNetworkStatus();
+      return;
+    }
+    if (lastPacketAge >= hardTimeout) {
+      this.onlineNetworkStatus = "timeout";
+      this.logNetworkWarning("hard timeout", { lastPacketAge });
+      this.updateNetworkStatus();
+      return;
+    }
+    if (
+      this.p2pStatus === "unstable" ||
+      metrics?.connectionState === "disconnected" ||
+      metrics?.iceConnectionState === "disconnected"
+    ) {
+      this.onlineNetworkStatus = "reconnecting";
+      if (!this.reconnectStartedAt) this.reconnectStartedAt = now;
+      this.logNetworkWarning("reconnecting", { lastPacketAge });
+      this.updateNetworkStatus();
+      return;
+    }
+    if (lastPacketAge >= VISIBLE_SOFT_TIMEOUT_MS) {
+      this.onlineNetworkStatus = "unstable";
+      this.heartbeatMissCount += 1;
+      this.logNetworkWarning("soft timeout", { lastPacketAge });
+      this.updateNetworkStatus();
+      return;
+    }
+    this.onlineNetworkStatus = "OK";
+    this.reconnectStartedAt = 0;
+    this.heartbeatMissCount = 0;
+    this.updateNetworkStatus();
+  }
+
+  shouldHardDisconnectOnline() {
+    return (
+      this.onlineNetworkStatus === "hard-failed" ||
+      this.onlineNetworkStatus === "closed" ||
+      this.onlineNetworkStatus === "timeout"
+    );
+  }
+
+  logNetworkWarning(reason, detail = {}) {
+    const now = Date.now();
+    if (now - this.lastNetworkWarnAt < 1000) return;
+    this.lastNetworkWarnAt = now;
+    console.warn("[NET]", reason, {
+      ...detail,
+      localHidden: this.localHidden,
+      remoteHidden: this.remoteHidden,
+      pcState: this.p2pMetrics?.connectionState ?? "-",
+      iceState: this.p2pMetrics?.iceConnectionState ?? "-",
+      dcState: this.p2pChannelState,
+    });
+  }
+
+  updateNetworkStatus() {
+    const isOnlineGame =
+      this.gameState === "onlinePlaying" ||
+      this.gameState === "onlineConnectionLost";
+    if (!isOnlineGame) {
+      this.setNetworkStatus("connected", "", false);
+      return;
+    }
+
+    if (this.shouldHardDisconnectOnline()) {
+      this.setNetworkStatus("disconnected", "상대와의 연결이 끊겼습니다", true);
+      return;
+    }
+
+    if (this.isReconnectingGraceState()) {
+      const remainingSeconds = this.getReconnectGraceRemainingSeconds();
+      const suffix = remainingSeconds !== null ? ` ${remainingSeconds}초` : "";
+      this.setNetworkStatus("reconnecting", `연결 복구 대기 중...${suffix}`, false);
+      return;
+    }
+
+    if (this.remoteHidden) {
+      this.setNetworkStatus("remote_hidden", "상대 창 비활성화 - 예측 진행 중", false);
+      return;
+    }
+
+    if (this.isInputPredictionActive() || this.onlineNetworkStatus === "unstable") {
+      this.setNetworkStatus("unstable", "연결 불안정 - 입력 예측 중", false);
+      return;
+    }
+
+    this.setNetworkStatus("connected", "", false);
+  }
+
+  setNetworkStatus(level, message, hardDisconnected) {
+    if (
+      this.networkStatus.level !== level ||
+      this.networkStatus.message !== message ||
+      this.networkStatus.hardDisconnected !== hardDisconnected
+    ) {
+      this.networkStatus = {
+        level,
+        message,
+        hardDisconnected,
+        sinceMs: Date.now(),
+      };
+    }
+    this.renderNetworkStatus();
+  }
+
+  isReconnectingGraceState() {
+    const metrics = this.p2pMetrics;
+    return (
+      this.onlineNetworkStatus === "reconnecting" ||
+      metrics?.connectionState === "disconnected" ||
+      metrics?.iceConnectionState === "disconnected"
+    ) && this.p2pChannelState !== "closed";
+  }
+
+  isInputPredictionActive() {
+    return Date.now() < this.predictionActiveUntilMs;
+  }
+
+  getReconnectGraceRemainingSeconds() {
+    const metrics = this.p2pMetrics;
+    const lastPacketAt = Math.max(this.onlineLastPacketAt || 0, metrics?.lastPacketAt || 0);
+    if (!lastPacketAt) return null;
+    const hardTimeout = this.localHidden || this.remoteHidden
+      ? HIDDEN_HARD_TIMEOUT_MS
+      : VISIBLE_HARD_TIMEOUT_MS;
+    const remaining = Math.max(0, hardTimeout - (Date.now() - lastPacketAt));
+    return Math.ceil(remaining / 1000);
+  }
+
+  renderNetworkStatus() {
+    if (!this.ui?.networkStatusBanner || !this.ui?.networkDisconnectModal) return;
+    const { level, message, hardDisconnected } = this.networkStatus;
+    const showBanner =
+      this.gameState === "onlinePlaying" &&
+      level !== "connected" &&
+      !hardDisconnected;
+    this.ui.networkStatusBanner.className = `network-status-banner ${level}`;
+    this.ui.networkStatusBanner.classList.toggle("hidden", !showBanner);
+    this.ui.networkStatusBanner.textContent = showBanner ? message : "";
+
+    const showModal =
+      hardDisconnected &&
+      (this.gameState === "onlinePlaying" || this.gameState === "onlineConnectionLost");
+    this.ui.networkDisconnectModal.classList.toggle("hidden", !showModal);
   }
 
   setOnlineNetcodeConfig(config = {}, broadcast = false) {
@@ -1709,7 +2058,7 @@ export class Game {
         inputDelayTicks: delay,
         rollbackWindow,
         effectiveTick,
-      });
+      }, { critical: true });
     }
   }
 
@@ -1748,7 +2097,7 @@ export class Game {
       seq: this.onlineInputSeq,
       playerId: this.localPlayerId,
       inputs,
-    });
+    }, { critical: true });
   }
 
   updateOnlineGameTick(tick, { isResimulating = false } = {}) {
@@ -1790,10 +2139,24 @@ export class Game {
       return normalized;
     }
     const predicted = cloneOnlineInput(
-      this.onlineLastKnownInput[slot] ?? createEmptyOnlineInput(),
+      this.shouldPredictNeutralInput(slot, tick)
+        ? createEmptyOnlineInput()
+        : this.onlineLastKnownInput[slot] ?? createEmptyOnlineInput(),
     );
     this.predictedInputBuffer[slot].set(tick, predicted);
+    if (slot !== this.currentSession?.localSlot) {
+      this.predictedInputTicks += 1;
+      this.predictionActiveUntilMs = Date.now() + 450;
+    }
     return predicted;
+  }
+
+  shouldPredictNeutralInput(slot, tick) {
+    if (slot === this.currentSession?.localSlot) return false;
+    if (this.remoteHidden) return true;
+    const latest = this.onlineLastReceivedInputTicks?.[slot] ?? -1;
+    if (latest < 0) return false;
+    return tick - latest > REMOTE_INPUT_LAST_KNOWN_TICKS;
   }
 
   rollbackToTick(tick, reason = null) {
@@ -1982,7 +2345,7 @@ export class Game {
       type: "checksum",
       tick,
       checksum,
-    });
+    }, { critical: false });
   }
 
   receiveOnlineChecksum(message) {
@@ -2152,6 +2515,7 @@ export class Game {
       if (this.roundWins[winnerIndex] >= MATCH_POINT) {
         this.matchWinner = winnerIndex;
         this.onlinePhase = "matchOver";
+        this.markOnlineRoomEnded();
         return;
       }
       this.roundNumber += 1;
@@ -2160,6 +2524,9 @@ export class Game {
   }
 
   captureLocalOnlineInput() {
+    if (this.forceLocalInputNeutral || document.hidden || !this.windowHasFocus) {
+      return createEmptyOnlineInput();
+    }
     const localCharacterId =
       this.currentSession?.localSlot === "p2"
         ? this.selectedP2Character
@@ -2226,13 +2593,7 @@ export class Game {
         !this.snapshotHistory.has(tick)
       ) {
         this.desyncStatus = `DESYNC / late input @ ${tick}`;
-        console.error("Late input exceeded rollback window", {
-          tick,
-          onlineTick: this.onlineTick,
-          rollbackWindow: this.onlineRollbackWindow,
-          slot,
-          actualInput,
-        });
+        this.recordLateInput(slot, tick, actualInput);
       } else {
         this.predictedInputBuffer[slot].delete(tick);
       }
@@ -2243,13 +2604,30 @@ export class Game {
     }
   }
 
+  recordLateInput(slot, tick, actualInput) {
+    this.lateInputDropCount += 1;
+    const now = performance.now();
+    if (now - this.lastLateInputWarnAt < LATE_INPUT_WARN_INTERVAL_MS) return;
+    console.warn("Late input exceeded rollback window", {
+      tick,
+      onlineTick: this.onlineTick,
+      rollbackWindow: this.onlineRollbackWindow,
+      slot,
+      droppedSinceLastWarn: this.lateInputDropCount,
+      actualInput,
+    });
+    this.lastLateInputWarnAt = now;
+    this.lateInputDropCount = 0;
+  }
+
   handleP2PDataMessage(message) {
+    this.onlineLastPacketAt = Date.now();
     if (message.type === "lockstepReady") {
       this.onlinePeerReady = true;
       this.p2pService?.send({
         type: "lockstepReadyAck",
         slot: this.currentSession?.localSlot,
-      });
+      }, { critical: true });
       return;
     }
 
@@ -2289,11 +2667,20 @@ export class Game {
 
     if (message.type === "pong" && Number.isFinite(Number(message.time))) {
       const rtt = Math.max(0, Date.now() - Number(message.time));
+      this.onlineLastPongAt = Date.now();
       this.pingSamples.push(rtt);
       this.pingSamples = this.pingSamples.slice(-10);
       this.averagePing = Math.round(
         this.pingSamples.reduce((sum, sample) => sum + sample, 0) / this.pingSamples.length,
       );
+      return;
+    }
+
+    if (message.type === "visibility") {
+      this.remoteHidden = Boolean(message.hidden);
+      this.addP2PLog(this.remoteHidden ? "Peer window hidden." : "Peer window visible.");
+      this.updateNetworkStatus();
+      this.syncOnlineDebugText();
       return;
     }
 
@@ -2319,13 +2706,13 @@ export class Game {
       type: "lockstepReady",
       slot: this.currentSession?.localSlot,
       seed: this.onlineSeed,
-    });
+    }, { critical: true });
   }
 
   sendOnlineState() {
     if (NETWORK_MODE !== "hostAuthority") return;
     if (this.onlineRole !== "host" || !this.p2pService || this.p2pChannelState !== "open") return;
-    this.p2pService.send(this.createOnlineStateMessage());
+    this.p2pService.send(this.createOnlineStateMessage(), { critical: false });
   }
 
   createOnlineStateMessage() {
@@ -3063,6 +3450,7 @@ export class Game {
       "hidden",
       this.gameState !== "onlinePlaying" && this.gameState !== "onlineConnectionLost",
     );
+    this.renderNetworkStatus();
     this.syncOnlineDebugText();
   }
 
@@ -3071,8 +3459,13 @@ export class Game {
     const pingText = this.averagePing === null
       ? "-"
       : `${this.averagePing}ms${this.averagePing >= 120 ? " HIGH" : ""}`;
+    const metrics = this.p2pMetrics;
+    const bufferedAmount = metrics?.bufferedAmount ?? this.p2pService?.getBufferedAmount?.() ?? 0;
+    const lastPacketAt = Math.max(this.onlineLastPacketAt || 0, metrics?.lastPacketAt || 0);
+    const lastPacketAgo = lastPacketAt ? `${Date.now() - lastPacketAt}ms` : "-";
+    const focusText = this.windowHasFocus ? "focused" : "blurred";
     this.ui.onlineDebugText.textContent =
-      `Netcode: Rollback / Role: ${this.onlineRole ?? "-"} / ` +
+      `Netcode: Rollback / Network: ${this.onlineNetworkStatus} / Role: ${this.onlineRole ?? "-"} / ` +
       `Slot: ${this.currentSession?.localSlot ?? "-"} / ` +
       `Tick: ${this.onlineTick} / Delay: ${this.onlineInputDelayTicks} / ` +
       `Window: ${this.onlineRollbackWindow} / ` +
@@ -3081,8 +3474,12 @@ export class Game {
       `Sent: ${this.onlineLastSentInputTick} / ` +
       `Recv P1: ${this.onlineLastReceivedInputTicks.p1} / ` +
       `Recv P2: ${this.onlineLastReceivedInputTicks.p2} / ` +
-      `Bundle: ${this.onlineInputBundleSize} / Ping: ${pingText} / ` +
-      `DataChannel: ${this.p2pChannelState} / ` +
+      `Bundle: ${this.onlineInputBundleSize} / Ping: ${pingText} / Miss: ${this.heartbeatMissCount} / ` +
+      `Predicted: ${this.predictedInputTicks} / Status: ${this.networkStatus.level} / ` +
+      `LastPacket: ${lastPacketAgo} / LocalHidden: ${this.localHidden} / RemoteHidden: ${this.remoteHidden} / ` +
+      `Focus: ${focusText} / DataChannel: ${this.p2pChannelState} / ` +
+      `PC: ${metrics?.connectionState ?? "-"} / ICE: ${metrics?.iceConnectionState ?? "-"} / ` +
+      `Buffer: ${formatBytes(bufferedAmount)}${bufferedAmount >= NETWORK_BUFFER_WARNING_AMOUNT ? " HIGH" : ""} / ` +
       `Sync: ${this.desyncStatus} / Phase: ${this.onlinePhase}`;
     const settingsDisabled = this.gameState !== "onlinePlaying" || this.onlineRole !== "host";
     this.ui.onlineInputDelaySelect.disabled = settingsDisabled;
@@ -3252,6 +3649,13 @@ function formatInputSummary(input) {
     .filter(([, enabled]) => enabled)
     .map(([key]) => key);
   return active.length > 0 ? active.join("+") : "neutral";
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)}MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)}KB`;
+  return `${value}B`;
 }
 
 function serializeCharacter(character) {

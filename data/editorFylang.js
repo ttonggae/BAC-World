@@ -184,7 +184,7 @@ export const FYLANG_ACTION_DATA = {
   },
   sword_j: {
     id: "sword_j",
-    name: "Sword Cut",
+    name: "검격",
     kind: "melee",
     input: "J",
     slot: "basicAttack",
@@ -201,7 +201,7 @@ export const FYLANG_ACTION_DATA = {
   },
   sword_k: {
     id: "sword_k",
-    name: "Sword Guard",
+    name: "의지",
     kind: "melee",
     input: "K",
     slot: "skill1",
@@ -219,7 +219,7 @@ export const FYLANG_ACTION_DATA = {
   },
   sword_l: {
     id: "sword_l",
-    name: "Sword Stun",
+    name: "격퇴",
     kind: "melee",
     input: "L",
     slot: "skill2",
@@ -246,7 +246,7 @@ export const FYLANG_ACTION_DATA = {
   },
   sword_shift: {
     id: "sword_shift",
-    name: "Sword Step",
+    name: "전진",
     kind: "movement",
     input: "Shift",
     slot: "movementSkill",
@@ -270,7 +270,7 @@ export const FYLANG_ACTION_DATA = {
   },
   spear_j: {
     id: "spear_j",
-    name: "Spear Jab",
+    name: "창격",
     kind: "melee",
     input: "J",
     slot: "basicAttack",
@@ -287,7 +287,7 @@ export const FYLANG_ACTION_DATA = {
   },
   spear_k: {
     id: "spear_k",
-    name: "Spear Sweep",
+    name: "접근 금지",
     kind: "melee",
     input: "K",
     slot: "skill1",
@@ -314,7 +314,7 @@ export const FYLANG_ACTION_DATA = {
   },
   spear_l: {
     id: "spear_l",
-    name: "Spear Throw",
+    name: "투창",
     kind: "projectile",
     input: "L",
     slot: "skill2",
@@ -340,7 +340,7 @@ export const FYLANG_ACTION_DATA = {
   },
   spear_shift: {
     id: "spear_shift",
-    name: "Spear Rush",
+    name: "진격",
     kind: "dashMelee",
     input: "Shift",
     slot: "movementSkill",
