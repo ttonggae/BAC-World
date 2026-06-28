@@ -299,12 +299,14 @@ export class P2PService {
     if (
       message.type !== "input" &&
       message.type !== "inputBundle" &&
+      message.type !== "inputRange" &&
       message.type !== "state" &&
       message.type !== "checksum" &&
       message.type !== "lockstepReady" &&
       message.type !== "lockstepReadyAck" &&
       message.type !== "netcodeConfig" &&
       message.type !== "visibility" &&
+      message.type !== "resumeInput" &&
       message.type !== "debug" &&
       message.type !== "ping" &&
       message.type !== "pong"

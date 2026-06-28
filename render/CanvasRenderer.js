@@ -73,6 +73,9 @@ export class CanvasRenderer {
     for (const character of state.characters) {
       this.drawCharacter(character);
     }
+    for (const character of state.characters) {
+      this.drawPlayerLabel(character);
+    }
     this.drawHitEffects();
     this.drawFloatingTexts();
     this.ctx.restore();
@@ -425,6 +428,25 @@ export class CanvasRenderer {
       this.drawLance(character);
     }
 
+    ctx.restore();
+  }
+
+  drawPlayerLabel(character) {
+    const ctx = this.ctx;
+    const label = `P${character.playerIndex + 1}`;
+    const color = character.playerIndex === 0 ? "#4f8dff" : "#ff5f5f";
+    const x = character.x + character.w / 2;
+    const y = character.y + character.h + 16;
+
+    ctx.save();
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetY = 1;
+    ctx.fillStyle = color;
+    ctx.fillText(label, x, y);
     ctx.restore();
   }
 

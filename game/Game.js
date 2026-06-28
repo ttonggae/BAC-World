@@ -89,7 +89,7 @@ const PRE_MATCH_PREVIEW_TIME = 3;
 const NETWORK_MODE = "rollback";
 const NETCODE_CONFIG = Object.freeze({
   tickRate: 60,
-  inputDelayTicks: 2,
+  inputDelayTicks: 1,
   rollbackWindow: 36,
   checksumInterval: 30,
   inputBundleSize: 24,
@@ -101,6 +101,9 @@ const HIDDEN_HARD_TIMEOUT_MS = 45000;
 const REMOTE_INPUT_LAST_KNOWN_TICKS = 12;
 const LATE_INPUT_WARN_INTERVAL_MS = 1000;
 const NETWORK_BUFFER_WARNING_AMOUNT = 128 * 1024;
+const VISIBILITY_NEUTRAL_BURST_TICKS = 600;
+const VISIBILITY_KEEPALIVE_MS = 1000;
+const MAX_ONLINE_CATCHUP_TICKS_PER_FRAME = 24;
 const FIXED_DT = 1 / NETCODE_CONFIG.tickRate;
 
 export class Game {
@@ -125,11 +128,6 @@ export class Game {
     this.onlineTick = 0;
     this.onlineInputSeq = 0;
     this.onlineLastInputSeq = 0;
-    this.onlineLastStateTick = 0;
-    this.onlineInputSendTimer = 0;
-    this.onlineStateSendTimer = 0;
-    this.onlineLastSentInput = "";
-    this.onlineRemoteInput = createEmptyOnlineInput();
     this.onlinePhase = "idle";
     this.onlineVirtualInput = new OnlineVirtualInput();
     this.onlineInputBuffer = createOnlineInputBuffer();
@@ -144,6 +142,7 @@ export class Game {
     this.remoteChecksums = new Map();
     this.checksumDetails = new Map();
     this.reportedDesyncTicks = new Set();
+    this.ignoreChecksumUntilTick = -1;
     this.desyncStatus = "OK";
     this.onlineSeed = 0;
     this.onlineRngState = 0;
@@ -181,6 +180,7 @@ export class Game {
     this.remoteHidden = false;
     this.windowHasFocus = typeof document.hasFocus === "function" ? document.hasFocus() : true;
     this.forceLocalInputNeutral = false;
+    this.visibilityKeepaliveTimer = 0;
     this.onlinePeerReady = false;
     this.onlineReadyAcknowledged = false;
     this.onlineReadySent = false;
@@ -210,6 +210,10 @@ export class Game {
     window.addEventListener("blur", () => this.handleWindowBlur());
     window.addEventListener("focus", () => this.handleWindowFocus());
     window.addEventListener("pagehide", () => this.handlePageHide());
+    this.visibilityKeepaliveTimer = window.setInterval(
+      () => this.sendVisibilityKeepaliveIfNeeded(),
+      VISIBILITY_KEEPALIVE_MS,
+    );
     this.loop = new GameLoop({
       update: (dt) => this.update(dt),
       render: () => this.render(),
@@ -223,7 +227,6 @@ export class Game {
   bindUi() {
     const ui = {
       mainMenu: document.querySelector("#mainMenu"),
-      matchmakingButton: document.querySelector("#matchmakingButton"),
       createRoomButton: document.querySelector("#createRoomButton"),
       joinRoomButton: document.querySelector("#joinRoomButton"),
       joinRoomScreen: document.querySelector("#joinRoomScreen"),
@@ -231,8 +234,6 @@ export class Game {
       joinRoomSubmitButton: document.querySelector("#joinRoomSubmitButton"),
       backFromJoinButton: document.querySelector("#backFromJoinButton"),
       joinRoomMessage: document.querySelector("#joinRoomMessage"),
-      matchmakingScreen: document.querySelector("#matchmakingScreen"),
-      cancelMatchmakingButton: document.querySelector("#cancelMatchmakingButton"),
       roomLobby: document.querySelector("#roomLobby"),
       roomCodeText: document.querySelector("#roomCodeText"),
       roomSessionTypeText: document.querySelector("#roomSessionTypeText"),
@@ -291,13 +292,11 @@ export class Game {
       backToSelectButton: document.querySelector("#backToSelectButton"),
     };
 
-    ui.matchmakingButton.addEventListener("click", () => this.startPvpPickFlow());
     ui.createRoomButton.addEventListener("click", () => this.createRoom());
     ui.joinRoomButton.addEventListener("click", () => this.openJoinRoom());
     ui.joinRoomSubmitButton.addEventListener("click", () => this.submitJoinRoom());
     ui.backFromJoinButton.addEventListener("click", () => this.goToMainMenu());
     ui.joinRoomCodeInput.addEventListener("input", () => this.normalizeJoinRoomCode());
-    ui.cancelMatchmakingButton.addEventListener("click", () => this.goToMainMenu());
     ui.copyRoomCodeButton.addEventListener("click", () => this.copyRoomCode());
     ui.readyRoomButton.addEventListener("click", () => this.toggleRoomReady());
     ui.practiceModeButton.addEventListener("click", () => this.selectRoomMode("practice"));
@@ -797,7 +796,13 @@ export class Game {
       this.forceLocalInputNeutral = false;
       this.addP2PLog("Window visible: input resumed.");
     }
+    this.suppressOnlineChecksums();
     this.sendVisibilityState();
+    if (this.isLocalInputInactive()) {
+      this.sendNeutralInputBurst({ critical: true, reason: "visibility" });
+    } else {
+      this.sendResumeInputSignal();
+    }
     this.syncOnlineDebugText();
   }
 
@@ -805,6 +810,9 @@ export class Game {
     this.windowHasFocus = false;
     this.input.reset();
     this.forceLocalInputNeutral = true;
+    this.suppressOnlineChecksums();
+    this.sendVisibilityState();
+    this.sendNeutralInputBurst({ critical: true, reason: "blur" });
     this.syncOnlineDebugText();
   }
 
@@ -813,6 +821,13 @@ export class Game {
     if (!document.hidden) {
       this.input.reset();
       this.forceLocalInputNeutral = false;
+    }
+    this.suppressOnlineChecksums();
+    this.sendVisibilityState();
+    if (this.isLocalInputInactive()) {
+      this.sendNeutralInputBurst({ critical: true, reason: "focus" });
+    } else {
+      this.sendResumeInputSignal();
     }
     this.syncOnlineDebugText();
   }
@@ -831,10 +846,78 @@ export class Game {
     if (this.p2pChannelState !== "open") return;
     this.p2pService?.send({
       type: "visibility",
-      hidden: this.localHidden,
+      hidden: this.isLocalInputInactive(),
       atTick: this.onlineTick,
       from: this.localPlayerId,
-    }, { critical: false });
+    }, { critical: true });
+  }
+
+  isLocalInputInactive() {
+    return this.localHidden || !this.windowHasFocus || this.forceLocalInputNeutral;
+  }
+
+  sendVisibilityKeepaliveIfNeeded() {
+    if (this.gameState !== "onlinePlaying" || this.p2pChannelState !== "open") return;
+    if (!this.isLocalInputInactive()) return;
+    this.sendVisibilityState();
+    this.sendNeutralInputBurst({ reason: "visibility-keepalive" });
+  }
+
+  sendNeutralInputBurst({
+    ticks = VISIBILITY_NEUTRAL_BURST_TICKS,
+    critical = false,
+    reason = "neutral",
+  } = {}) {
+    const slot = this.currentSession?.localSlot;
+    if (
+      this.gameState !== "onlinePlaying" ||
+      (slot !== "p1" && slot !== "p2") ||
+      this.p2pChannelState !== "open"
+    ) {
+      return;
+    }
+
+    const startTick = this.onlineTick + this.onlineInputDelayTicks;
+    const endTick = startTick + Math.max(0, ticks - 1);
+    const neutralInput = createEmptyOnlineInput();
+    for (let tick = startTick; tick <= endTick; tick += 1) {
+      this.onlineInputBuffer[slot].set(tick, cloneOnlineInput(neutralInput));
+    }
+    this.onlineLastSentInputTick = Math.max(this.onlineLastSentInputTick, endTick);
+    this.onlineInputSeq += 1;
+    this.p2pService?.send({
+      type: "inputRange",
+      slot,
+      latestTick: endTick,
+      seq: this.onlineInputSeq,
+      playerId: this.localPlayerId,
+      hidden: this.isLocalInputInactive(),
+      neutralForced: true,
+      reason,
+      fromTick: startTick,
+      toTick: endTick,
+      input: cloneOnlineInput(neutralInput),
+    }, { critical: true });
+  }
+
+  sendResumeInputSignal() {
+    const slot = this.currentSession?.localSlot;
+    if (
+      this.gameState !== "onlinePlaying" ||
+      (slot !== "p1" && slot !== "p2") ||
+      this.p2pChannelState !== "open"
+    ) {
+      return;
+    }
+    const resumeTick = this.onlineTick + this.onlineInputDelayTicks + 2;
+    this.p2pService?.send({
+      type: "resumeInput",
+      slot,
+      resumeTick,
+      atTick: this.onlineTick,
+      seq: this.onlineInputSeq,
+      playerId: this.localPlayerId,
+    }, { critical: true });
   }
 
   async connectP2P() {
@@ -1704,11 +1787,6 @@ export class Game {
       this.onlineTick = 0;
       this.onlineInputSeq = 0;
       this.onlineLastInputSeq = 0;
-      this.onlineLastStateTick = 0;
-      this.onlineInputSendTimer = 0;
-      this.onlineStateSendTimer = 0;
-      this.onlineLastSentInput = "";
-      this.onlineRemoteInput = createEmptyOnlineInput();
       this.onlineInputBuffer = createOnlineInputBuffer();
       this.predictedInputBuffer = createOnlineInputBuffer();
       this.onlineLastKnownInput = createOnlineLastKnownInput();
@@ -1721,6 +1799,7 @@ export class Game {
       this.remoteChecksums = new Map();
       this.checksumDetails = new Map();
       this.reportedDesyncTicks = new Set();
+      this.ignoreChecksumUntilTick = -1;
       this.desyncStatus = "OK";
       this.onlineSeed = normalizeSeed(matchConfig.seed);
       this.onlineRngState = this.onlineSeed;
@@ -1858,6 +1937,7 @@ export class Game {
     this.scheduleLocalInput();
     this.updateOnlineGameTick(this.onlineTick);
     this.onlineTick += 1;
+    this.catchUpOnlineSimulation();
     this.sendOnlineHeartbeatIfDue();
     this.syncOnlineDebugText();
   }
@@ -1874,12 +1954,44 @@ export class Game {
     }, { critical: true });
   }
 
+  catchUpOnlineSimulation() {
+    if (this.gameState !== "onlinePlaying" || this.onlinePhase !== "playing") return;
+    const localSlot = this.currentSession?.localSlot;
+    if (localSlot !== "p1" && localSlot !== "p2") return;
+
+    const p1Available =
+      localSlot === "p1"
+        ? this.onlineLastSentInputTick
+        : this.onlineLastReceivedInputTicks.p1;
+    const p2Available =
+      localSlot === "p2"
+        ? this.onlineLastSentInputTick
+        : this.onlineLastReceivedInputTicks.p2;
+    const targetTick = Math.max(
+      this.onlineTick,
+      Math.min(p1Available, p2Available) - this.onlineInputDelayTicks,
+    );
+
+    let steps = 0;
+    while (
+      this.onlineTick < targetTick &&
+      steps < MAX_ONLINE_CATCHUP_TICKS_PER_FRAME &&
+      this.gameState === "onlinePlaying" &&
+      this.onlinePhase === "playing"
+    ) {
+      this.scheduleLocalInput();
+      this.updateOnlineGameTick(this.onlineTick);
+      this.onlineTick += 1;
+      steps += 1;
+    }
+  }
+
   updateOnlineNetworkHealth() {
     const now = Date.now();
     const metrics = this.p2pMetrics;
     const lastPacketAt = Math.max(this.onlineLastPacketAt || 0, metrics?.lastPacketAt || 0);
     const lastPacketAge = lastPacketAt ? now - lastPacketAt : 0;
-    const hardTimeout = this.localHidden || this.remoteHidden
+    const hardTimeout = this.isLocalInputInactive() || this.remoteHidden
       ? HIDDEN_HARD_TIMEOUT_MS
       : VISIBLE_HARD_TIMEOUT_MS;
 
@@ -2012,7 +2124,7 @@ export class Game {
     const metrics = this.p2pMetrics;
     const lastPacketAt = Math.max(this.onlineLastPacketAt || 0, metrics?.lastPacketAt || 0);
     if (!lastPacketAt) return null;
-    const hardTimeout = this.localHidden || this.remoteHidden
+    const hardTimeout = this.isLocalInputInactive() || this.remoteHidden
       ? HIDDEN_HARD_TIMEOUT_MS
       : VISIBLE_HARD_TIMEOUT_MS;
     const remaining = Math.max(0, hardTimeout - (Date.now() - lastPacketAt));
@@ -2387,8 +2499,18 @@ export class Game {
   }
 
   canCompareChecksumAtTick(tick) {
+    if (tick <= this.ignoreChecksumUntilTick) return false;
+    if (this.isLocalInputInactive() || this.remoteHidden) return false;
     const remoteSlot = this.currentSession?.localSlot === "p1" ? "p2" : "p1";
     return Boolean(this.onlineInputBuffer?.[remoteSlot]?.has(tick));
+  }
+
+  suppressOnlineChecksums(ticks = this.onlineRollbackWindow + this.onlineInputBundleSize) {
+    if (this.gameState !== "onlinePlaying") return;
+    this.ignoreChecksumUntilTick = Math.max(
+      this.ignoreChecksumUntilTick,
+      this.onlineTick + Math.max(1, ticks),
+    );
   }
 
   createOnlineChecksum(tick) {
@@ -2640,6 +2762,36 @@ export class Game {
     this.comparePendingChecksums();
   }
 
+  processRemoteInputRange(message) {
+    const slot = message.slot;
+    if (
+      (slot !== "p1" && slot !== "p2") ||
+      slot === this.currentSession.localSlot
+    ) {
+      return;
+    }
+
+    const fromTick = Number(message.fromTick);
+    const toTick = Number(message.toTick);
+    if (
+      !Number.isInteger(fromTick) ||
+      !Number.isInteger(toTick) ||
+      fromTick < 0 ||
+      toTick < fromTick
+    ) {
+      return;
+    }
+
+    const input = normalizeOnlineInput(message.input);
+    const entries = [];
+    for (let tick = fromTick; tick <= toTick; tick += 1) {
+      entries.push({ tick, input });
+    }
+    this.remoteHidden = Boolean(message.hidden);
+    this.suppressOnlineChecksums(Math.max(this.onlineRollbackWindow, toTick - this.onlineTick));
+    this.processRemoteInputBundle(slot, entries, Number(message.seq) || 0);
+  }
+
   comparePendingChecksums() {
     for (const tick of this.remoteChecksums.keys()) {
       this.compareOnlineChecksum(tick);
@@ -2698,6 +2850,16 @@ export class Game {
       return;
     }
 
+    if (message.type === "inputRange" && this.gameState === "onlinePlaying") {
+      this.processRemoteInputRange(message);
+      this.addP2PLog(
+        `Peer input range ${message.fromTick ?? "-"}-${message.toTick ?? "-"}.`,
+      );
+      this.updateNetworkStatus();
+      this.syncOnlineDebugText();
+      return;
+    }
+
     if (message.type === "input" && this.gameState === "onlinePlaying") {
       this.processRemoteInputBundle(
         message.slot,
@@ -2720,7 +2882,24 @@ export class Game {
 
     if (message.type === "visibility") {
       this.remoteHidden = Boolean(message.hidden);
+      this.suppressOnlineChecksums();
       this.addP2PLog(this.remoteHidden ? "Peer window hidden." : "Peer window visible.");
+      this.updateNetworkStatus();
+      this.syncOnlineDebugText();
+      return;
+    }
+
+    if (message.type === "resumeInput") {
+      this.remoteHidden = false;
+      if (Number.isInteger(Number(message.resumeTick))) {
+        this.ignoreChecksumUntilTick = Math.max(
+          this.ignoreChecksumUntilTick,
+          Number(message.resumeTick) + this.onlineRollbackWindow,
+        );
+      } else {
+        this.suppressOnlineChecksums();
+      }
+      this.addP2PLog("Peer input resumed.");
       this.updateNetworkStatus();
       this.syncOnlineDebugText();
       return;
@@ -3465,7 +3644,6 @@ export class Game {
 
   syncUi() {
     const isMainMenu = this.gameState === "mainMenu";
-    const isMatchmaking = this.gameState === "matchmaking";
     const isJoinRoom = this.gameState === "joinRoom";
     const isRoomLobby = this.gameState === "roomLobby";
     const isSelecting = this.gameState === "characterSelect" || this.gameState === "mapSelect";
@@ -3479,7 +3657,6 @@ export class Game {
       this.gameState === "onlinePlaying" ||
       this.gameState === "onlineConnectionLost";
     this.ui.mainMenu.classList.toggle("hidden", !isMainMenu);
-    this.ui.matchmakingScreen.classList.toggle("hidden", !isMatchmaking);
     this.ui.joinRoomScreen.classList.toggle("hidden", !isJoinRoom);
     this.ui.roomLobby.classList.toggle("hidden", !isRoomLobby);
     this.ui.characterSelect.classList.toggle("hidden", !isSelecting);
