@@ -2,6 +2,7 @@ import { ABILITIES } from "../data/abilities.js";
 
 export function updateAbilityState(player, dt, context) {
   updateCooldowns(player, dt);
+  updateActiveHazards(player, context);
   if (player.isActionRestricted?.()) {
     player.pendingAbility = null;
     return;
@@ -11,6 +12,13 @@ export function updateAbilityState(player, dt, context) {
 
 export function useAbility(player, abilityId, context) {
   if (!abilityId) return false;
+  if (
+    abilityId === player.abilities?.basicAttack &&
+    player.comboNextActionId &&
+    (player.comboWindowTicks ?? 0) > 0
+  ) {
+    abilityId = player.comboNextActionId;
+  }
 
   const ability = ABILITIES[abilityId];
   if (!ability) {
@@ -23,6 +31,21 @@ export function useAbility(player, abilityId, context) {
 
   if ((player.castLockTicks ?? 0) > 0) {
     return false;
+  }
+
+  if (ability.oncePerMatch && player.usedOnceAbilities?.[ability.id]) {
+    return false;
+  }
+
+  if (
+    ability.requiresHpPercentAtOrBelow !== null &&
+    ability.requiresHpPercentAtOrBelow !== undefined
+  ) {
+    const healthPercent = player.maxHealth > 0 ? (player.health / player.maxHealth) * 100 : 0;
+    if (healthPercent > ability.requiresHpPercentAtOrBelow) {
+      player.staminaFlash = 0.22;
+      return false;
+    }
   }
 
   if (ability.behavior === "recastDetonate") {
@@ -58,6 +81,13 @@ export function useAbility(player, abilityId, context) {
 
   applyAbilityMovement(player, ability);
   applyChargeOnUse(player, ability);
+  activatePersistentHazard(player, ability, context);
+  if (ability.oncePerMatch) {
+    player.usedOnceAbilities = {
+      ...(player.usedOnceAbilities ?? {}),
+      [ability.id]: true,
+    };
+  }
   pushUseEffect(player, ability, context);
   if (ability.activeWeaponVisualId) {
     player.actionWeaponVisualId = ability.activeWeaponVisualId;
@@ -71,6 +101,12 @@ export function useAbility(player, abilityId, context) {
     player.cooldownTicks[abilityId] = ability.cooldownTicks ?? 0;
     if ((ability.castLockTicks ?? 0) > 0) {
       player.castLockTicks = ability.castLockTicks;
+    }
+    if (ability.superArmorDuringStartup?.ignoreCrowdControl) {
+      player.crowdControlArmorTicks = Math.max(
+        player.crowdControlArmorTicks ?? 0,
+        ability.startupTicks ?? 0,
+      );
     }
   }
 
@@ -219,6 +255,96 @@ function updateCooldowns(player, dt) {
   }
 }
 
+function activatePersistentHazard(player, ability, context) {
+  const hazard = ability.fallingPillarHazard;
+  if (!hazard || !context?.map) return;
+  const state = {
+    abilityId: ability.id,
+    nextInTicks: hazard.warningTicks ?? 45,
+    spawnCount: 0,
+  };
+  player.activeHazards = {
+    ...(player.activeHazards ?? {}),
+    [ability.id]: state,
+  };
+}
+
+function updateActiveHazards(player, context) {
+  const hazards = player.activeHazards ?? {};
+  for (const [abilityId, state] of Object.entries(hazards)) {
+    const ability = ABILITIES[abilityId];
+    const hazard = ability?.fallingPillarHazard;
+    if (!ability || !hazard || !context?.combat || !context?.map) continue;
+    state.nextInTicks = Math.max(0, (state.nextInTicks ?? 0) - 1);
+    if (state.nextInTicks > 0) continue;
+
+    spawnFallingPillar(player, ability, hazard, state, context);
+    state.spawnCount = (state.spawnCount ?? 0) + 1;
+    state.nextInTicks = getNextHazardInterval(ability, hazard, state);
+  }
+}
+
+function spawnFallingPillar(player, ability, hazard, state, context) {
+  const bounds = context.map.bounds ?? {
+    left: 0,
+    right: context.map.width ?? 960,
+    bottom: context.map.height ?? 540,
+  };
+  const hitbox = hazard.hitbox ?? { w: 18, h: 86 };
+  const spawnTick = Number(context.simulationTick) || 0;
+  const seedValue = deterministicUnit(
+    `${player.playerIndex}:${ability.id}:${state.spawnCount ?? 0}:${spawnTick}`,
+  );
+  const minX = bounds.left;
+  const maxX = Math.max(minX, bounds.right - hitbox.w);
+  const x = minX + Math.floor(seedValue * Math.max(1, maxX - minX));
+  const y = Math.max(bounds.top ?? 0, (bounds.bottom ?? 540) - hitbox.h);
+  const instanceId = `${player.playerIndex}_${ability.id}_pillar_${spawnTick}_${state.spawnCount ?? 0}`;
+
+  context.combat.spawnArea({
+    id: instanceId,
+    areaInstanceId: instanceId,
+    owner: player,
+    abilityId: ability.id,
+    x,
+    y,
+    w: hitbox.w,
+    h: hitbox.h,
+    hitboxes: [{ x, y, w: hitbox.w, h: hitbox.h }],
+    damage: hazard.damage ?? ability.damage ?? 0,
+    knockback: {
+      x: 0,
+      y: hazard.knockdown ? 420 : ability.knockback?.y ?? -120,
+    },
+    durationTicks: 8,
+    damageIntervalTicks: 9999,
+    tickRate: ability.tickRate,
+    friendlyFireSelf: Boolean(hazard.friendlyFireSelf),
+    fillColor: "rgba(255, 246, 210, 0.34)",
+    strokeColor: "rgba(255, 255, 255, 0.82)",
+    effectType: ability.effectType,
+    screenShake: ability.screenShake,
+    stun: ability.stun,
+  });
+}
+
+function getNextHazardInterval(ability, hazard, state) {
+  const min = hazard.intervalMinTicks ?? 120;
+  const max = Math.max(min, hazard.intervalMaxTicks ?? min);
+  const t = deterministicUnit(`${ability.id}:interval:${state.spawnCount ?? 0}`);
+  return min + Math.floor(t * (max - min + 1));
+}
+
+function deterministicUnit(value) {
+  let hash = 2166136261;
+  const text = String(value);
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+}
+
 function updatePendingAbility(player, dt, context) {
   const pending = player.pendingAbility;
   if (!pending) return;
@@ -316,9 +442,11 @@ function releaseEditorHitboxes(player, ability, context) {
   const damage = getAbilityDamage(player, ability);
   for (const hitbox of ability.hitboxes ?? []) {
     const x =
-      direction > 0
+      ability.mirrorHitboxes === false
         ? player.x + hitbox.x
-        : player.x + player.w - hitbox.x - hitbox.w;
+        : direction > 0
+          ? player.x + hitbox.x
+          : player.x + player.w - hitbox.x - hitbox.w;
     context.combat.spawnHitbox({
       attackInstanceId,
       hitTargetIds,
@@ -348,6 +476,7 @@ function releaseEditorHitboxes(player, ability, context) {
     });
   }
   consumeModeSwapBonus(player, ability);
+  updateComboState(player, ability);
 }
 
 function fireEditorProjectile(player, ability, context) {
@@ -402,6 +531,7 @@ function fireEditorProjectile(player, ability, context) {
     facing: direction,
   });
   consumeModeSwapBonus(player, ability);
+  updateComboState(player, ability);
 }
 
 function useRecastDetonateAbility(player, ability, context) {
@@ -605,7 +735,9 @@ function releaseEditorAreaHazard(player, ability, context) {
     facing: direction,
     hitboxes: (ability.hitboxes ?? []).map((hitbox) => ({
       x:
-        direction > 0
+        ability.mirrorHitboxes === false
+          ? player.x + hitbox.x
+          : direction > 0
           ? player.x + hitbox.x
           : player.x + player.w - hitbox.x - hitbox.w,
       y: player.y + hitbox.y,
@@ -627,6 +759,29 @@ function releaseEditorAreaHazard(player, ability, context) {
     screenShake: ability.screenShake,
     stun: ability.stun,
   });
+  updateComboState(player, ability);
+}
+
+function updateComboState(player, ability) {
+  if (!ability.editorAction) return;
+  if (ability.nextComboActionId && (ability.comboWindowTicks ?? 0) > 0) {
+    player.comboNextActionId = ability.nextComboActionId;
+    player.comboWindowTicks = ability.comboWindowTicks;
+    player.comboResetActionId = ability.comboResetActionId ?? player.abilities.basicAttack;
+    return;
+  }
+  player.comboNextActionId = null;
+  player.comboWindowTicks = 0;
+  player.comboResetActionId = ability.comboResetActionId ?? null;
+  if (
+    ability.comboResetActionId &&
+    ability.comboResetActionId !== ability.id &&
+    (ability.cooldownTicks ?? 0) > 0
+  ) {
+    player.cooldownTicks[ability.comboResetActionId] = ability.cooldownTicks;
+    player.cooldowns[ability.comboResetActionId] =
+      ability.cooldownTicks / (ability.tickRate ?? 60);
+  }
 }
 
 function pushUseEffect(player, ability, context) {

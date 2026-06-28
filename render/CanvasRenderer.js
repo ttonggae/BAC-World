@@ -270,7 +270,8 @@ export class CanvasRenderer {
     const ctx = this.ctx;
     for (const projectile of projectiles) {
       const weapon = projectile.visualWeaponId
-        ? EDITOR_WEAPONS[projectile.visualWeaponId]
+        ? EDITOR_WEAPONS[projectile.visualWeaponId] ??
+          EDITOR_OTHER_IMAGES[projectile.visualWeaponId]
         : null;
       if (weapon?.visual?.parts) {
         this.drawWeaponProjectile(projectile, weapon);
@@ -287,7 +288,8 @@ export class CanvasRenderer {
     const ctx = this.ctx;
     for (const area of areas) {
       const weapon = area.visualWeaponId
-        ? EDITOR_WEAPONS[area.visualWeaponId]
+        ? EDITOR_WEAPONS[area.visualWeaponId] ??
+          EDITOR_OTHER_IMAGES[area.visualWeaponId]
         : null;
       ctx.save();
       ctx.globalAlpha = Math.min(1, Math.max(0.25, area.remainingTicks / 30));

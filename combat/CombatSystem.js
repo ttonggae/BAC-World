@@ -98,7 +98,7 @@ export class CombatSystem {
       for (const target of characters) {
         const targetId = getTargetId(target);
         if (
-          target === area.owner ||
+          (target === area.owner && !area.friendlyFireSelf) ||
           !target.isAlive ||
           target.isInvincible ||
           target.isHurtboxDisabled ||

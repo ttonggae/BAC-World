@@ -73,8 +73,14 @@ export class OfflineMatch {
     character.cooldownTicks = {};
     character.buffs = {};
     character.activeStatuses = {};
+    character.activeHazards = {};
+    character.usedOnceAbilities = {};
     character.pendingAbility = null;
     character.castLockTicks = 0;
+    character.comboNextActionId = null;
+    character.comboWindowTicks = 0;
+    character.comboResetActionId = null;
+    character.crowdControlArmorTicks = 0;
     character.invincibleTicks = 0;
     character.hurtboxDisabledTicks = 0;
     character.hitStun = 0;

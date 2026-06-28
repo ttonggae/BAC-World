@@ -28,8 +28,14 @@ export class CharacterBase {
     this.cooldownTicks = {};
     this.buffs = {};
     this.activeStatuses = {};
+    this.activeHazards = {};
+    this.usedOnceAbilities = {};
     this.pendingAbility = null;
     this.castLockTicks = 0;
+    this.comboNextActionId = null;
+    this.comboWindowTicks = 0;
+    this.comboResetActionId = null;
+    this.crowdControlArmorTicks = 0;
     this.invincibleTicks = 0;
     this.hurtboxDisabledTicks = 0;
     this.weight = stats.weight;
@@ -136,6 +142,12 @@ export class CharacterBase {
       this.dashStopOnEnd = false;
     }
     this.castLockTicks = Math.max(0, this.castLockTicks - 1);
+    this.comboWindowTicks = Math.max(0, this.comboWindowTicks - 1);
+    if (this.comboWindowTicks === 0) {
+      this.comboNextActionId = null;
+      this.comboResetActionId = null;
+    }
+    this.crowdControlArmorTicks = Math.max(0, this.crowdControlArmorTicks - 1);
     this.invincibleTicks = Math.max(0, this.invincibleTicks - 1);
     this.hurtboxDisabledTicks = Math.max(0, this.hurtboxDisabledTicks - 1);
     this.updateBuffs(dt);
@@ -274,6 +286,14 @@ export class CharacterBase {
       ticksApplied: 0,
     };
     if (config.refreshRule === "ignore" && this.activeStatuses[key]) return;
+    if (
+      this.crowdControlArmorTicks > 0 &&
+      (config.statusId === "root" ||
+        config.statusId === "stun" ||
+        config.statusId === "bind")
+    ) {
+      return;
+    }
     this.activeStatuses[key] = next;
     if (config.statusId === "root") {
       this.vx = 0;
@@ -291,6 +311,9 @@ export class CharacterBase {
     this.vx = 0;
     this.actionWeaponVisualId = null;
     this.actionWeaponVisualTicks = 0;
+    this.comboNextActionId = null;
+    this.comboWindowTicks = 0;
+    this.comboResetActionId = null;
     this.attackFlash = 0;
     this.skillFlash = 0;
     this.guardFlash = 0;
@@ -509,6 +532,10 @@ export class CharacterBase {
     const damage = Math.ceil(hit.damage * this.getIncomingDamageMultiplier());
     const knockbackMultiplier = this.getIncomingKnockbackMultiplier();
     this.health = Math.max(0, this.health - damage);
+    if (this.crowdControlArmorTicks > 0) {
+      this.hitFlash = 0.18;
+      return damage;
+    }
     this.vx = (hit.knockback.x * knockbackMultiplier) / this.weight;
     this.vy = (hit.knockback.y * knockbackMultiplier) / Math.sqrt(this.weight);
     this.hitStun = hit.stun;

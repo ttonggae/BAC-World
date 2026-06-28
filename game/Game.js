@@ -2628,6 +2628,10 @@ export class Game {
         quantize(character.dropTimer),
         quantize(character.hitStun),
         character.castLockTicks ?? 0,
+        character.comboNextActionId ?? "",
+        character.comboWindowTicks ?? 0,
+        character.comboResetActionId ?? "",
+        character.crowdControlArmorTicks ?? 0,
         quantize(character.dashTimer),
         character.dashTicks ?? 0,
         character.dashStopOnEnd ? 1 : 0,
@@ -2639,6 +2643,8 @@ export class Game {
         character.modeSwapBonusDamage ?? 0,
         stableStringify(character.buffs ?? {}),
         stableStringify(character.activeStatuses ?? {}),
+        stableStringify(character.activeHazards ?? {}),
+        stableStringify(character.usedOnceAbilities ?? {}),
         character.pendingAbility?.abilityId ?? "",
         quantize(character.pendingAbility?.startupRemaining ?? 0),
         character.pendingAbility?.startupTicksRemaining ?? "",
@@ -2669,6 +2675,7 @@ export class Game {
         area.id ?? "",
         area.remainingTicks ?? 0,
         area.elapsedTicks ?? 0,
+        area.friendlyFireSelf ? 1 : 0,
         ...[...(area.lastDamageTickByTargetId ?? new Map()).entries()].flat(),
       ]),
       quantize(this.roundTimer),
@@ -2693,6 +2700,10 @@ export class Game {
       dropTimer: character.dropTimer,
       hitStun: character.hitStun,
       castLockTicks: character.castLockTicks,
+      comboNextActionId: character.comboNextActionId,
+      comboWindowTicks: character.comboWindowTicks,
+      comboResetActionId: character.comboResetActionId,
+      crowdControlArmorTicks: character.crowdControlArmorTicks,
       dashTimer: character.dashTimer,
       dashTicks: character.dashTicks,
       dashStopOnEnd: character.dashStopOnEnd,
@@ -2704,6 +2715,8 @@ export class Game {
       modeSwapBonusDamage: character.modeSwapBonusDamage,
       buffs: clonePlainObject(character.buffs),
       activeStatuses: clonePlainObject(character.activeStatuses),
+      activeHazards: clonePlainObject(character.activeHazards),
+      usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
       cooldowns: { ...character.cooldowns },
       cooldownTicks: { ...character.cooldownTicks },
       pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
@@ -2727,6 +2740,7 @@ export class Game {
         id: area.id,
         remainingTicks: area.remainingTicks,
         elapsedTicks: area.elapsedTicks,
+        friendlyFireSelf: area.friendlyFireSelf,
         lastDamageTickEntries: [
           ...(area.lastDamageTickByTargetId ?? new Map()).entries(),
         ],
@@ -2781,20 +2795,27 @@ export class Game {
       up: this.input.isDown("KeyW"),
       down: this.input.isDown("KeyS"),
       attack: this.input.isDown("KeyJ"),
-      skill1: this.input.isDown("KeyK"),
       skill2: this.input.isDown("KeyL"),
       movementSkill:
         localCharacterId === "w_corp_cleaner"
           ? this.input.isDown("KeyM")
           : this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight"),
       extra:
-        localCharacterId === "inquisitor" || localCharacterId === "w_corp_cleaner"
+        localCharacterId === "blade_hand"
+          ? this.input.isDown("KeyK")
+          : localCharacterId === "inquisitor" || localCharacterId === "w_corp_cleaner"
           ? this.input.isDown("KeyB")
           : this.input.isDown("Semicolon"),
+      skill1:
+        localCharacterId === "blade_hand"
+          ? this.input.isDown("KeyB")
+          : this.input.isDown("KeyK"),
       special:
         localCharacterId === "fylang_character" || localCharacterId === "hai_ht2"
           ? this.input.isDown("Space")
-          : this.input.isDown("KeyN"),
+          : localCharacterId === "blade_hand"
+            ? false
+            : this.input.isDown("KeyN"),
     };
   }
 
@@ -4041,6 +4062,16 @@ function unpackOnlineInputBundle(packedInputs) {
 }
 
 function getControlsForCharacter(baseControls, characterId) {
+  if (characterId === "blade_hand") {
+    return {
+      ...baseControls,
+      skill1: "KeyB",
+      skill2: "KeyL",
+      extra: "KeyK",
+      special: null,
+      movementSkill: baseControls.movementSkill ?? "ShiftLeft",
+    };
+  }
   if (characterId === "fylang_character" || characterId === "hai_ht2") {
     return {
       ...baseControls,
@@ -4104,6 +4135,8 @@ function serializeCharacter(character) {
     cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
     activeStatuses: clonePlainObject(character.activeStatuses),
+    activeHazards: clonePlainObject(character.activeHazards),
+    usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
     hitStun: character.hitStun,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
@@ -4112,6 +4145,10 @@ function serializeCharacter(character) {
     weaponFlash: character.weaponFlash,
     staminaFlash: character.staminaFlash,
     castLockTicks: character.castLockTicks,
+    comboNextActionId: character.comboNextActionId,
+    comboWindowTicks: character.comboWindowTicks,
+    comboResetActionId: character.comboResetActionId,
+    crowdControlArmorTicks: character.crowdControlArmorTicks,
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     dashStopOnEnd: character.dashStopOnEnd,
@@ -4146,6 +4183,8 @@ function applyCharacterSnapshot(character, snapshot) {
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs ?? {});
   character.activeStatuses = clonePlainObject(snapshot.activeStatuses ?? {});
+  character.activeHazards = clonePlainObject(snapshot.activeHazards ?? {});
+  character.usedOnceAbilities = clonePlainObject(snapshot.usedOnceAbilities ?? {});
   character.hitStun = snapshot.hitStun ?? 0;
   character.hitFlash = snapshot.hitFlash ?? 0;
   character.attackFlash = snapshot.attackFlash ?? 0;
@@ -4154,6 +4193,10 @@ function applyCharacterSnapshot(character, snapshot) {
   character.weaponFlash = snapshot.weaponFlash ?? 0;
   character.staminaFlash = snapshot.staminaFlash ?? 0;
   character.castLockTicks = snapshot.castLockTicks ?? 0;
+  character.comboNextActionId = snapshot.comboNextActionId ?? null;
+  character.comboWindowTicks = snapshot.comboWindowTicks ?? 0;
+  character.comboResetActionId = snapshot.comboResetActionId ?? null;
+  character.crowdControlArmorTicks = snapshot.crowdControlArmorTicks ?? 0;
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
   character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
@@ -4206,8 +4249,14 @@ function serializeCharacterSnapshot(character, map) {
     cooldownTicks: { ...character.cooldownTicks },
     buffs: clonePlainObject(character.buffs),
     activeStatuses: clonePlainObject(character.activeStatuses),
+    activeHazards: clonePlainObject(character.activeHazards),
+    usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
     pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
     castLockTicks: character.castLockTicks,
+    comboNextActionId: character.comboNextActionId,
+    comboWindowTicks: character.comboWindowTicks,
+    comboResetActionId: character.comboResetActionId,
+    crowdControlArmorTicks: character.crowdControlArmorTicks,
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     onGround: character.onGround,
@@ -4252,8 +4301,14 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
   character.buffs = clonePlainObject(snapshot.buffs);
   character.activeStatuses = clonePlainObject(snapshot.activeStatuses);
+  character.activeHazards = clonePlainObject(snapshot.activeHazards);
+  character.usedOnceAbilities = clonePlainObject(snapshot.usedOnceAbilities);
   character.pendingAbility = snapshot.pendingAbility ? { ...snapshot.pendingAbility } : null;
   character.castLockTicks = snapshot.castLockTicks ?? 0;
+  character.comboNextActionId = snapshot.comboNextActionId ?? null;
+  character.comboWindowTicks = snapshot.comboWindowTicks ?? 0;
+  character.comboResetActionId = snapshot.comboResetActionId ?? null;
+  character.crowdControlArmorTicks = snapshot.crowdControlArmorTicks ?? 0;
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
   character.onGround = Boolean(snapshot.onGround);
@@ -4350,12 +4405,14 @@ function copyCombatFields(entity) {
     projectileColor: entity.projectileColor,
     visualWeaponId: entity.visualWeaponId,
     excludePartNames: [...(entity.excludePartNames ?? [])],
+    friendlyFireSelf: Boolean(entity.friendlyFireSelf),
     facing: entity.facing,
     followOwner: Boolean(entity.followOwner),
     sourceFacing: entity.sourceFacing,
     sourceHitbox: entity.sourceHitbox ? { ...entity.sourceHitbox } : null,
     effects: (entity.effects ?? []).map((effect) => ({ ...effect })),
     hitboxes: (entity.hitboxes ?? []).map((hitbox) => ({ ...hitbox })),
+    mirrorHitboxes: entity.mirrorHitboxes,
     elapsedTicks: entity.elapsedTicks,
     damageIntervalTicks: entity.damageIntervalTicks,
   };

@@ -37,6 +37,12 @@ import {
   W_CORP_CLEANER_OTHER_IMAGE_DATA,
   W_CORP_CLEANER_WEAPON_DATA,
 } from "./editorWCorpCleaner.js";
+import {
+  ACTION_DATA as BLADE_HAND_ACTION_DATA,
+  CHARACTER_DATA as BLADE_HAND_CHARACTER_DATA,
+  OTHER_IMAGE_DATA as BLADE_HAND_OTHER_IMAGE_DATA,
+  WEAPON_DATA as BLADE_HAND_WEAPON_DATA,
+} from "./editorBladeHand.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -90,6 +96,14 @@ const DATA_SOURCES = [
     otherImages: W_CORP_CLEANER_OTHER_IMAGE_DATA,
     namespace: "wcorp",
   },
+  {
+    characters: BLADE_HAND_CHARACTER_DATA,
+    actions: BLADE_HAND_ACTION_DATA,
+    weapons: BLADE_HAND_WEAPON_DATA,
+    otherImages: BLADE_HAND_OTHER_IMAGE_DATA,
+    namespace: "blade",
+    skipActionIds: ["sinho"],
+  },
 ];
 
 export function adaptEditorCharacters() {
@@ -103,10 +117,10 @@ export function adaptEditorCharacters() {
         {
           id: character.id,
           name: character.name,
-          role: character.role ?? null,
-          description: character.description,
-          difficulty: character.difficulty ?? null,
-          tags: [...(character.tags ?? [])],
+          role: character.role ?? character.ui?.role ?? null,
+          description: character.description ?? character.ui?.description ?? "",
+          difficulty: character.difficulty ?? character.ui?.difficulty ?? null,
+          tags: [...(character.tags ?? character.ui?.tags ?? [])],
           color: character.color,
           size: { ...character.size },
           stats: {
@@ -130,8 +144,8 @@ export function adaptEditorCharacters() {
             extra: getRuntimeId(namespace, character.actionSlots.extra),
             special: getRuntimeId(namespace, character.actionSlots.special),
           },
-          actionIds: character.actionIds.map((id) => getRuntimeId(namespace, id)),
-          extraActionIds: character.extraActionIds.map((id) =>
+          actionIds: (character.actionIds ?? []).map((id) => getRuntimeId(namespace, id)),
+          extraActionIds: (character.extraActionIds ?? []).map((id) =>
             getRuntimeId(namespace, id),
           ),
           defaultWeaponId: getRuntimeId(namespace, character.defaultWeaponId),
@@ -162,8 +176,10 @@ export function adaptEditorCharacters() {
 
 export function adaptEditorActions() {
   return Object.fromEntries(
-    DATA_SOURCES.flatMap(({ actions, namespace }) =>
-      Object.values(actions).map((action) => {
+    DATA_SOURCES.flatMap(({ actions, namespace, skipActionIds = [] }) =>
+      Object.values(actions)
+        .filter((action) => !skipActionIds.includes(action.id))
+        .map((action) => {
         const runtimeId = getRuntimeId(namespace, action.id);
         return [
           runtimeId,
@@ -172,7 +188,7 @@ export function adaptEditorActions() {
             sourceActionId: action.id,
             name: action.name,
             description: action.description,
-            type: adaptActionType(action.kind),
+            type: adaptActionType(action),
             behavior: action.behavior ?? null,
             startupWeaponVisualId: getRuntimeId(
               namespace,
@@ -195,33 +211,33 @@ export function adaptEditorActions() {
             recoveryTicks: action.recovery,
             cooldownTicks: action.cooldown,
             hitboxes: action.hitboxes.map((hitbox) => ({ ...hitbox })),
-            knockback: { ...action.knockback },
-            movement: action.movement
+            knockback: action.knockback ? { ...action.knockback } : { x: 0, y: 0 },
+            comboStep: action.comboStep ?? null,
+            nextComboActionId: getRuntimeId(namespace, action.nextComboActionId),
+            comboWindowTicks: action.comboWindowTicks ?? 0,
+            comboResetActionId: getRuntimeId(namespace, action.comboResetActionId),
+            mirrorHitboxes: action.mirrorHitboxes !== false,
+            oncePerMatch: Boolean(action.oncePerMatch),
+            requiresHpPercentAtOrBelow: action.requiresHpPercentAtOrBelow ?? null,
+            fallingPillarHazard: action.fallingPillarHazard
               ? {
-                  ...action.movement,
-                  durationSeconds: ticksToSeconds(action.movement.duration),
+                  ...action.fallingPillarHazard,
+                  hitbox: action.fallingPillarHazard.hitbox
+                    ? { ...action.fallingPillarHazard.hitbox }
+                    : null,
+                  visualSequence: [
+                    ...(action.fallingPillarHazard.visualSequence ?? []),
+                  ].map((id) => getRuntimeId(namespace, id)),
                 }
               : null,
+            movement: adaptMovement(action),
             stanceSwitch: action.stanceSwitch
               ? {
                   ...action.stanceSwitch,
                   modes: [...(action.stanceSwitch.modes ?? [])],
                 }
               : null,
-            projectile: action.projectile
-              ? {
-                  ...action.projectile,
-                  spawn: { ...action.projectile.spawn },
-                  visualWeaponId: getRuntimeId(
-                    namespace,
-                    action.projectile.visualWeaponId,
-                  ),
-                  homing: action.projectile.homing
-                    ? { ...action.projectile.homing }
-                    : null,
-                  lifetimeSeconds: ticksToSeconds(action.projectile.lifetime),
-                }
-              : null,
+            projectile: adaptProjectile(action, namespace),
             area: action.area
               ? {
                   ...action.area,
@@ -247,15 +263,19 @@ export function adaptEditorActions() {
             chargeCost: action.chargeCost ?? 0,
             chargeOnUse: action.chargeOnUse ?? 0,
             selfDamageOnChargeFail: action.selfDamageOnChargeFail ?? 0,
-            effects: action.effects?.map((effect) => ({ ...effect })) ?? [],
+            effects: adaptEffects(action),
             effectsImplemented: true,
             castLockTicks: action.lockActions
               ? action.startup + action.recovery
               : action.kind === "projectile"
                 ? action.startup + action.recovery
                 : 0,
-            invincibleTicks: action.invincibleTicks ?? 0,
+            invincibleTicks:
+              action.invincibleTicks ?? (action.kind === "movement" ? action.active ?? 0 : 0),
             hurtboxDisabledTicks: action.hurtboxDisabledTicks ?? 0,
+            superArmorDuringStartup: action.superArmorDuringStartup
+              ? { ...action.superArmorDuringStartup }
+              : null,
             stun: ticksToSeconds(
               action.stunTicks ?? (action.kind === "projectile" ? 5 : 4),
             ),
@@ -301,9 +321,86 @@ export const EDITOR_OTHER_IMAGES = Object.fromEntries(
   ),
 );
 
-function adaptActionType(kind) {
-  if (kind === "effectMelee") return "effectMelee";
-  return kind;
+function adaptActionType(action) {
+  if (action.id === "baekskip") return "dashMelee";
+  if (action.kind === "effectMelee") return "effectMelee";
+  return action.kind;
+}
+
+function adaptMovement(action) {
+  if (action.movement) {
+    return {
+      ...action.movement,
+      durationSeconds: ticksToSeconds(action.movement.duration),
+    };
+  }
+
+  if (action.id === "baekskip") {
+    return {
+      type: "dash",
+      direction: "backward",
+      duration: action.active ?? 8,
+      durationSeconds: ticksToSeconds(action.active ?? 8),
+      speed: 520,
+      stopOnEnd: true,
+    };
+  }
+
+  if (action.kind !== "movement") return null;
+  return {
+    type: "dash",
+    direction: "facing",
+    duration: action.active ?? 0,
+    durationSeconds: ticksToSeconds(action.active ?? 0),
+    speed: action.moveSpeed ?? 650,
+    stopOnEnd: true,
+  };
+}
+
+function adaptProjectile(action, namespace) {
+  if (action.projectile) {
+    return {
+      ...action.projectile,
+      spawn: { ...action.projectile.spawn },
+      visualWeaponId: getRuntimeId(namespace, action.projectile.visualWeaponId),
+      homing: action.projectile.homing ? { ...action.projectile.homing } : null,
+      lifetimeSeconds: ticksToSeconds(action.projectile.lifetime),
+    };
+  }
+
+  if (action.kind !== "projectile") return null;
+  const visual = action.projectileVisual ?? {};
+  return {
+    spawn: { ...(action.spawnPoint ?? { x: 0, y: 0 }) },
+    visualWeaponId: getRuntimeId(
+      namespace,
+      visual.otherImageId ?? visual.weaponId ?? null,
+    ),
+    excludePartNames: [...(visual.excludePartNames ?? [])],
+    speed: action.projectileSpeed ?? 680,
+    lifetime: action.projectileLifetime ?? action.active ?? 60,
+    lifetimeSeconds: ticksToSeconds(action.projectileLifetime ?? action.active ?? 60),
+    pierce: 0,
+    destroyOnHit: true,
+    destroyOnWall: true,
+  };
+}
+
+function adaptEffects(action) {
+  const effects = action.effects?.map((effect) => ({ ...effect })) ?? [];
+  if (action.statusOnHit) {
+    const status = action.statusOnHit;
+    effects.push({
+      type: "status",
+      statusId: "bleed",
+      damagePerTick: status.damage ?? 0,
+      tickInterval: status.intervalTicks ?? 30,
+      maxTicks: status.ticks ?? 1,
+      durationTicks: (status.intervalTicks ?? 30) * (status.ticks ?? 1),
+      refreshRule: status.stacking === "refresh" ? "refresh" : undefined,
+    });
+  }
+  return effects;
 }
 
 function getRuntimeId(namespace, id) {
