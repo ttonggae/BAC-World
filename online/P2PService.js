@@ -117,7 +117,6 @@ export class P2PService {
     this.bindDataChannel(this.channel, "control");
     this.inputChannel = this.peer.createDataChannel("input", {
       ordered: false,
-      maxPacketLifeTime: 120,
     });
     this.bindDataChannel(this.inputChannel, "input");
     this.listenForSignals();

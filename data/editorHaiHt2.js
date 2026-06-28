@@ -3,7 +3,7 @@ export const HAI_HT2_CHARACTER_DATA = {
     "id": "hai_ht2",
     "name": "Hai-HT2",
     "role": "중화기 탄약형 차량",
-    "description": "묵직한 장갑과 탄약 관리로 압박하는 중화기 차량 캐릭터입니다. 기본 사격은 탄약을 빠르게 소모하고, 고폭탄과 소이탄은 발사 후 재입력으로 원하는 위치에서 폭발시킵니다.",
+    "description": "헤일리  중전차 Mk.2",
     "difficulty": 2,
     "tags": [
       "vehicle",
@@ -1021,7 +1021,7 @@ export const HAI_HT2_ACTION_DATA = {
         "w": 111,
         "h": 84
       },
-      "damage": 6,
+      "damage": 10,
       "durationTicks": 6,
       "screenShake": 4,
       "effectType": "dashHit"

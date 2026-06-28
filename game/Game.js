@@ -90,15 +90,15 @@ const NETWORK_MODE = "rollback";
 const NETCODE_CONFIG = Object.freeze({
   tickRate: 60,
   inputDelayTicks: 1,
-  rollbackWindow: 36,
+  rollbackWindow: 90,
   checksumInterval: 30,
-  inputBundleSize: 24,
+  inputBundleSize: 30,
 });
 const HEARTBEAT_INTERVAL_MS = 1000;
 const VISIBLE_SOFT_TIMEOUT_MS = 8000;
 const VISIBLE_HARD_TIMEOUT_MS = 30000;
 const HIDDEN_HARD_TIMEOUT_MS = 45000;
-const REMOTE_INPUT_LAST_KNOWN_TICKS = 12;
+const REMOTE_INPUT_LAST_KNOWN_TICKS = 18;
 const LATE_INPUT_WARN_INTERVAL_MS = 1000;
 const NETWORK_BUFFER_WARNING_AMOUNT = 128 * 1024;
 const VISIBILITY_NEUTRAL_BURST_TICKS = 600;
@@ -163,6 +163,7 @@ export class Game {
     this.onlineLastPacketAt = 0;
     this.onlineLastPongAt = 0;
     this.onlineNetworkStatus = "idle";
+    this.onlineStopReason = "";
     this.networkStatus = {
       level: "connected",
       message: "",
@@ -1819,6 +1820,7 @@ export class Game {
       this.onlineLastPacketAt = Date.now();
       this.onlineLastPongAt = Date.now();
       this.onlineNetworkStatus = "OK";
+      this.onlineStopReason = "";
       this.setNetworkStatus("connected", "", false);
       this.heartbeatMissCount = 0;
       this.lastNetworkWarnAt = 0;
@@ -1917,6 +1919,7 @@ export class Game {
     if (this.shouldHardDisconnectOnline()) {
       this.onlinePhase = "connectionLost";
       this.gameState = "onlineConnectionLost";
+      this.onlineStopReason = "Connection lost";
       this.markOnlineRoomEnded();
       this.updateNetworkStatus();
       this.syncUi();
@@ -2066,6 +2069,11 @@ export class Game {
       return;
     }
 
+    if (this.gameState === "onlineConnectionLost" && this.onlinePhase === "desync") {
+      this.setNetworkStatus("disconnected", "동기화 복구 불가 - 방으로 돌아가 주세요", true);
+      return;
+    }
+
     if (this.shouldHardDisconnectOnline()) {
       this.setNetworkStatus("disconnected", "상대와의 연결이 끊겼습니다", true);
       return;
@@ -2153,7 +2161,7 @@ export class Game {
       0,
       Math.min(2, Math.round(Number(config.inputDelayTicks ?? this.onlineInputDelayTicks) || 0)),
     );
-    const rollbackWindow = [12, 24, 36].includes(Number(config.rollbackWindow))
+    const rollbackWindow = [36, 60, 90].includes(Number(config.rollbackWindow))
       ? Number(config.rollbackWindow)
       : this.onlineRollbackWindow;
     if (broadcast && this.onlineRole !== "host") {
@@ -2496,6 +2504,12 @@ export class Game {
       recentP2Inputs: this.getRecentInputs("p2", tick, 10),
       rollbackLogs: this.rollbackLogs,
     });
+    this.stopOnlineForDesync(`Checksum mismatch @ ${tick}`, {
+      tick,
+      local,
+      remote,
+      details: this.checksumDetails.get(tick),
+    });
   }
 
   canCompareChecksumAtTick(tick) {
@@ -2564,6 +2578,7 @@ export class Game {
         quantize(projectile.vx),
         quantize(projectile.vy),
         quantize(projectile.life),
+        projectile.manualDetonate ? 1 : 0,
         projectile.homingActive ? 1 : 0,
         projectile.hasReleasedHoming ? 1 : 0,
         projectile.lockedTargetId ?? "",
@@ -2800,6 +2815,11 @@ export class Game {
 
   recordLateInput(slot, tick, actualInput) {
     this.lateInputDropCount += 1;
+    this.stopOnlineForDesync(`Unrecoverable late input @ ${tick}`, {
+      slot,
+      tick,
+      actualInput,
+    });
     const now = performance.now();
     if (now - this.lastLateInputWarnAt < LATE_INPUT_WARN_INTERVAL_MS) return;
     console.warn("Late input exceeded rollback window", {
@@ -2812,6 +2832,26 @@ export class Game {
     });
     this.lastLateInputWarnAt = now;
     this.lateInputDropCount = 0;
+  }
+
+  stopOnlineForDesync(reason, detail = {}) {
+    if (this.gameState === "onlineConnectionLost") return;
+    this.onlineStopReason = reason;
+    this.onlinePhase = "desync";
+    this.gameState = "onlineConnectionLost";
+    this.desyncStatus = reason;
+    this.markOnlineRoomEnded();
+    this.updateNetworkStatus();
+    this.syncUi();
+    console.error("BAC World online sync stopped", {
+      reason,
+      onlineTick: this.onlineTick,
+      rollbackWindow: this.onlineRollbackWindow,
+      detail,
+      recentP1Inputs: this.getRecentInputs("p1", this.onlineTick, 12),
+      recentP2Inputs: this.getRecentInputs("p2", this.onlineTick, 12),
+      rollbackLogs: this.rollbackLogs,
+    });
   }
 
   handleP2PDataMessage(message) {
@@ -3282,7 +3322,7 @@ export class Game {
 
   getCenterText() {
     if (this.gameState === "onlineConnectionLost") {
-      return "Connection Lost";
+      return this.onlinePhase === "desync" ? "Sync Lost" : "Connection Lost";
     }
 
     if (this.gameState === "onlinePlaying") {
@@ -3319,7 +3359,9 @@ export class Game {
   }
 
   getStatusText() {
-    if (this.gameState === "onlineConnectionLost") return "Connection Lost";
+    if (this.gameState === "onlineConnectionLost") {
+      return this.onlineStopReason || "Connection Lost";
+    }
     if (this.gameState === "onlinePlaying") {
       if (this.onlinePhase === "roundOver") return "Next Round";
       if (this.onlinePhase === "matchOver") return "Match Over";
@@ -4153,6 +4195,7 @@ function copyCombatFields(entity) {
     screenShake: entity.screenShake,
     destroyOnHit: entity.destroyOnHit,
     destroyOnWall: entity.destroyOnWall,
+    manualDetonate: entity.manualDetonate,
     pierce: entity.pierce,
     speed: entity.speed,
     homing: entity.homing ? { ...entity.homing } : null,
