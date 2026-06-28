@@ -92,7 +92,7 @@ const NETCODE_CONFIG = Object.freeze({
   inputDelayTicks: 1,
   rollbackWindow: 90,
   checksumInterval: 30,
-  inputBundleSize: 30,
+  inputBundleSize: 12,
 });
 const HEARTBEAT_INTERVAL_MS = 1000;
 const VISIBLE_SOFT_TIMEOUT_MS = 8000;
@@ -602,6 +602,17 @@ export class Game {
   handleOnlineRoomStatus(room) {
     if (!this.currentSession?.online || this.currentSession.mode !== "pvpRoom") return;
 
+    if (room.status === "ended") {
+      if (this.gameState === "onlinePlaying") {
+        this.onlineStopReason = "Room ended";
+        this.onlinePhase = "connectionLost";
+        this.gameState = "onlineConnectionLost";
+        this.updateNetworkStatus();
+        this.syncUi();
+      }
+      return;
+    }
+
     if (room.status === "closed") {
       this.stopRoomPresenceHeartbeat();
       this.goToMainMenu();
@@ -668,6 +679,9 @@ export class Game {
     }
 
     if (room.status === "onlinePlaying") {
+      if (this.gameState === "onlinePlaying" || this.gameState === "onlineConnectionLost") {
+        return;
+      }
       this.currentMode = "pvpRoom";
       this.startOnlineGameFromMatchConfig(room.matchConfig ?? this.currentSession.matchConfig);
       return;
@@ -925,6 +939,15 @@ export class Game {
 
   async connectP2P() {
     if (this.p2pChannelState === "open") return;
+    if (
+      this.p2pService &&
+      this.p2pStatus !== "failed" &&
+      this.p2pStatus !== "closed" &&
+      this.p2pStatus !== "idle"
+    ) {
+      this.addP2PLog("P2P connection is already starting.");
+      return;
+    }
     if (this.p2pConnectPromise) return this.p2pConnectPromise;
     if (!this.currentSession?.online || !this.currentSession.roomCode) {
       this.addP2PLog("Online room is required.");
@@ -977,9 +1000,6 @@ export class Game {
           if (this.gameState === "roomLobby") {
             this.renderP2PPanel();
           }
-          if (this.gameState === "onlinePlaying" || this.gameState === "onlineConnectionLost") {
-            this.syncOnlineDebugText();
-          }
         },
         onDataMessage: (message) => this.handleP2PDataMessage(message),
       });
@@ -1007,6 +1027,7 @@ export class Game {
       !isFirebaseReady() ||
       this.p2pChannelState === "open" ||
       this.p2pStatus === "connecting" ||
+      (this.p2pService && this.p2pStatus !== "failed" && this.p2pStatus !== "closed") ||
       this.p2pConnectPromise ||
       Date.now() - this.p2pLastConnectAttempt < 3000
     ) {
@@ -2215,10 +2236,10 @@ export class Game {
     }
     this.onlineInputSeq += 1;
     const firstTick = Math.max(0, targetTick - this.onlineInputBundleSize + 1);
-    const inputs = [];
+    const packedInputs = [];
     for (let tick = firstTick; tick <= targetTick; tick += 1) {
       const input = this.onlineInputBuffer[slot].get(tick);
-      if (input) inputs.push({ tick, input: cloneOnlineInput(input) });
+      if (input) packedInputs.push([tick, onlineInputToMask(input)]);
     }
     const sent = this.p2pService?.send({
       type: "inputBundle",
@@ -2226,7 +2247,7 @@ export class Game {
       latestTick: targetTick,
       seq: this.onlineInputSeq,
       playerId: this.localPlayerId,
-      inputs,
+      packedInputs,
     }, { realtime: true });
     if (sent) {
       this.onlineLastInputBundleSentTick = targetTick;
@@ -2913,7 +2934,7 @@ export class Game {
     if (message.type === "inputBundle" && this.gameState === "onlinePlaying") {
       this.processRemoteInputBundle(
         message.slot,
-        message.inputs,
+        message.inputs ?? unpackOnlineInputBundle(message.packedInputs),
         Number(message.seq) || 0,
       );
       return;
@@ -3938,6 +3959,48 @@ function onlineInputSignature(input) {
     normalized.extra ? 1 : 0,
     normalized.special ? 1 : 0,
   ].join("");
+}
+
+function onlineInputToMask(input) {
+  const normalized = normalizeOnlineInput(input);
+  return (
+    (normalized.left ? 1 << 0 : 0) |
+    (normalized.right ? 1 << 1 : 0) |
+    (normalized.up ? 1 << 2 : 0) |
+    (normalized.down ? 1 << 3 : 0) |
+    (normalized.attack ? 1 << 4 : 0) |
+    (normalized.skill1 ? 1 << 5 : 0) |
+    (normalized.skill2 ? 1 << 6 : 0) |
+    (normalized.movementSkill ? 1 << 7 : 0) |
+    (normalized.extra ? 1 << 8 : 0) |
+    (normalized.special ? 1 << 9 : 0)
+  );
+}
+
+function onlineInputFromMask(mask) {
+  const value = Number(mask) || 0;
+  return {
+    left: Boolean(value & (1 << 0)),
+    right: Boolean(value & (1 << 1)),
+    up: Boolean(value & (1 << 2)),
+    down: Boolean(value & (1 << 3)),
+    attack: Boolean(value & (1 << 4)),
+    skill1: Boolean(value & (1 << 5)),
+    skill2: Boolean(value & (1 << 6)),
+    movementSkill: Boolean(value & (1 << 7)),
+    extra: Boolean(value & (1 << 8)),
+    special: Boolean(value & (1 << 9)),
+  };
+}
+
+function unpackOnlineInputBundle(packedInputs) {
+  if (!Array.isArray(packedInputs)) return [];
+  return packedInputs
+    .filter((entry) => Array.isArray(entry) && entry.length >= 2)
+    .map(([tick, mask]) => ({
+      tick: Number(tick),
+      input: onlineInputFromMask(mask),
+    }));
 }
 
 function getControlsForCharacter(baseControls, characterId) {
