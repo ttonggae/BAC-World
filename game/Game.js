@@ -1800,7 +1800,7 @@ export class Game {
       this.remoteChecksums = new Map();
       this.checksumDetails = new Map();
       this.reportedDesyncTicks = new Set();
-      this.ignoreChecksumUntilTick = -1;
+      this.ignoreChecksumUntilTick = NETCODE_CONFIG.rollbackWindow;
       this.desyncStatus = "OK";
       this.onlineSeed = normalizeSeed(matchConfig.seed);
       this.onlineRngState = this.onlineSeed;
@@ -2741,6 +2741,8 @@ export class Game {
       const actualInput = normalizeOnlineInput(entry.input);
       const predictedInput = this.predictedInputBuffer[slot].get(tick);
       const previousInput = this.onlineInputBuffer[slot].get(tick);
+      const previousMismatch =
+        previousInput && !inputsEqual(normalizeOnlineInput(previousInput), actualInput);
       this.onlineInputBuffer[slot].set(tick, actualInput);
       this.onlineLastReceivedInputTick = Math.max(this.onlineLastReceivedInputTick, tick);
       this.onlineLastReceivedInputTicks[slot] = Math.max(
@@ -2748,20 +2750,28 @@ export class Game {
         tick,
       );
 
-      if (tick < this.onlineTick && predictedInput && !inputsEqual(predictedInput, actualInput)) {
+      if (
+        tick < this.onlineTick &&
+        ((predictedInput && !inputsEqual(predictedInput, actualInput)) || previousMismatch)
+      ) {
+        if (!this.snapshotHistory.has(tick)) {
+          this.desyncStatus = `DESYNC / late input @ ${tick}`;
+          this.recordLateInput(slot, tick, actualInput);
+          continue;
+        }
         this.predictionMissCount += 1;
         if (earliestMismatch === null || tick < earliestMismatch) {
           earliestMismatch = tick;
           mismatchReason = {
             slot,
-            predicted: cloneOnlineInput(predictedInput),
+            predicted: cloneOnlineInput(predictedInput ?? previousInput),
             actual: cloneOnlineInput(actualInput),
           };
         }
       } else if (
         tick < this.onlineTick &&
         !predictedInput &&
-        (!previousInput || !inputsEqual(normalizeOnlineInput(previousInput), actualInput)) &&
+        (!previousInput || previousMismatch) &&
         !this.snapshotHistory.has(tick)
       ) {
         this.desyncStatus = `DESYNC / late input @ ${tick}`;
