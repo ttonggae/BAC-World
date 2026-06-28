@@ -19,6 +19,7 @@ const SERVICE_HEARTBEAT_MS = 2000;
 const METRICS_EMIT_INTERVAL_MS = 100;
 const INPUT_CHANNEL_OPTIONS = Object.freeze({
   ordered: false,
+  maxPacketLifeTime: 1200,
 });
 
 function serializeDescription(description) {
@@ -392,17 +393,9 @@ export class P2PService {
     }
     this.updateBufferedAmount();
     if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT && !options.critical) {
-      if (
-        channel === realtimeChannel &&
-        this.channel?.readyState === "open" &&
-        this.channel.bufferedAmount < BUFFER_LOW_AMOUNT
-      ) {
-        channel = this.channel;
-      } else {
-        this.metrics.droppedSendCount += 1;
-        this.emitMetrics();
-        return false;
-      }
+      this.metrics.droppedSendCount += 1;
+      this.emitMetrics();
+      return false;
     }
     if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT && !options.critical) {
       this.metrics.droppedSendCount += 1;

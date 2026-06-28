@@ -92,7 +92,7 @@ const NETCODE_CONFIG = Object.freeze({
   inputDelayTicks: 1,
   rollbackWindow: 90,
   checksumInterval: 30,
-  inputBundleSize: 12,
+  inputBundleSize: 24,
 });
 const HEARTBEAT_INTERVAL_MS = 1000;
 const VISIBLE_SOFT_TIMEOUT_MS = 8000;
@@ -104,6 +104,8 @@ const NETWORK_BUFFER_WARNING_AMOUNT = 128 * 1024;
 const VISIBILITY_NEUTRAL_BURST_TICKS = 600;
 const VISIBILITY_KEEPALIVE_MS = 1000;
 const MAX_ONLINE_CATCHUP_TICKS_PER_FRAME = 24;
+const CHECKSUM_DESYNC_CONFIRMATIONS = 3;
+const CHECKSUM_DESYNC_WINDOW_TICKS = 180;
 const FIXED_DT = 1 / NETCODE_CONFIG.tickRate;
 
 export class Game {
@@ -143,6 +145,7 @@ export class Game {
     this.localChecksums = new Map();
     this.remoteChecksums = new Map();
     this.checksumDetails = new Map();
+    this.pendingChecksumMismatches = new Map();
     this.reportedDesyncTicks = new Set();
     this.ignoreChecksumUntilTick = -1;
     this.desyncStatus = "OK";
@@ -894,7 +897,10 @@ export class Game {
       return;
     }
 
-    const startTick = this.onlineTick + this.onlineInputDelayTicks;
+    const startTick = Math.max(
+      this.onlineTick + this.onlineInputDelayTicks,
+      this.onlineLastSentInputTick + 1,
+    );
     const endTick = startTick + Math.max(0, ticks - 1);
     const neutralInput = createEmptyOnlineInput();
     for (let tick = startTick; tick <= endTick; tick += 1) {
@@ -1824,6 +1830,7 @@ export class Game {
       this.localChecksums = new Map();
       this.remoteChecksums = new Map();
       this.checksumDetails = new Map();
+      this.pendingChecksumMismatches = new Map();
       this.reportedDesyncTicks = new Set();
       this.ignoreChecksumUntilTick = NETCODE_CONFIG.rollbackWindow;
       this.desyncStatus = "OK";
@@ -2355,6 +2362,9 @@ export class Game {
     for (const checksumTick of [...this.checksumDetails.keys()]) {
       if (checksumTick >= tick) this.checksumDetails.delete(checksumTick);
     }
+    for (const checksumTick of [...this.pendingChecksumMismatches.keys()]) {
+      if (checksumTick >= tick) this.pendingChecksumMismatches.delete(checksumTick);
+    }
     for (const checksumTick of [...this.reportedDesyncTicks]) {
       if (checksumTick >= tick) this.reportedDesyncTicks.delete(checksumTick);
     }
@@ -2499,6 +2509,11 @@ export class Game {
     for (const tick of this.checksumDetails.keys()) {
       if (tick < oldestChecksumTick) this.checksumDetails.delete(tick);
     }
+    for (const tick of this.pendingChecksumMismatches.keys()) {
+      if (tick < currentTick - CHECKSUM_DESYNC_WINDOW_TICKS) {
+        this.pendingChecksumMismatches.delete(tick);
+      }
+    }
     for (const tick of [...this.reportedDesyncTicks]) {
       if (tick < oldestChecksumTick) this.reportedDesyncTicks.delete(tick);
     }
@@ -2529,13 +2544,31 @@ export class Game {
     if (!local || !remote) return;
     if (!this.canCompareChecksumAtTick(tick)) return;
     if (local === remote) {
-      if (this.desyncStatus !== "DESYNC") this.desyncStatus = "OK";
+      this.pendingChecksumMismatches.delete(tick);
+      if (!this.pendingChecksumMismatches.size && this.desyncStatus !== "DESYNC") {
+        this.desyncStatus = "OK";
+      }
       return;
     }
-    this.desyncStatus = `DESYNC @ ${tick}`;
+    this.pendingChecksumMismatches.set(tick, {
+      tick,
+      local,
+      remote,
+      details: this.checksumDetails.get(tick),
+    });
+    for (const mismatchTick of this.pendingChecksumMismatches.keys()) {
+      if (mismatchTick < tick - CHECKSUM_DESYNC_WINDOW_TICKS) {
+        this.pendingChecksumMismatches.delete(mismatchTick);
+      }
+    }
+    const mismatchCount = this.pendingChecksumMismatches.size;
+    this.desyncStatus =
+      mismatchCount >= CHECKSUM_DESYNC_CONFIRMATIONS
+        ? `DESYNC @ ${tick}`
+        : `DESYNC pending ${mismatchCount}/${CHECKSUM_DESYNC_CONFIRMATIONS}`;
     if (this.reportedDesyncTicks.has(tick)) return;
     this.reportedDesyncTicks.add(tick);
-    console.error("BAC World online desync", {
+    const logPayload = {
       tick,
       local,
       remote,
@@ -2543,12 +2576,19 @@ export class Game {
       recentP1Inputs: this.getRecentInputs("p1", tick, 10),
       recentP2Inputs: this.getRecentInputs("p2", tick, 10),
       rollbackLogs: this.rollbackLogs,
-    });
+      pendingMismatches: mismatchCount,
+    };
+    if (mismatchCount < CHECKSUM_DESYNC_CONFIRMATIONS) {
+      console.warn("BAC World online checksum mismatch pending", logPayload);
+      return;
+    }
+    console.error("BAC World online desync", logPayload);
     this.stopOnlineForDesync(`Checksum mismatch @ ${tick}`, {
       tick,
       local,
       remote,
       details: this.checksumDetails.get(tick),
+      pendingMismatches: mismatchCount,
     });
   }
 
@@ -2865,11 +2905,8 @@ export class Game {
 
   recordLateInput(slot, tick, actualInput) {
     this.lateInputDropCount += 1;
-    this.stopOnlineForDesync(`Unrecoverable late input @ ${tick}`, {
-      slot,
-      tick,
-      actualInput,
-    });
+    this.desyncStatus = `Late input dropped @ ${tick}`;
+    this.suppressOnlineChecksums(this.onlineRollbackWindow);
     const now = performance.now();
     if (now - this.lastLateInputWarnAt < LATE_INPUT_WARN_INTERVAL_MS) return;
     console.warn("Late input exceeded rollback window", {
