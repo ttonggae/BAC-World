@@ -135,6 +135,8 @@ export class Game {
     this.onlineLastKnownInput = createOnlineLastKnownInput();
     this.onlineLastReceivedSeq = { p1: 0, p2: 0 };
     this.onlineLastSentInputTick = 0;
+    this.onlineLastInputBundleSentTick = -1;
+    this.onlineLastInputBundleSignature = "";
     this.onlineLastReceivedInputTick = 0;
     this.onlineLastReceivedInputTicks = { p1: 0, p2: 0 };
     this.snapshotHistory = new Map();
@@ -1793,6 +1795,8 @@ export class Game {
       this.onlineLastKnownInput = createOnlineLastKnownInput();
       this.onlineLastReceivedSeq = { p1: 0, p2: 0 };
       this.onlineLastSentInputTick = 0;
+      this.onlineLastInputBundleSentTick = -1;
+      this.onlineLastInputBundleSignature = "";
       this.onlineLastReceivedInputTick = 0;
       this.onlineLastReceivedInputTicks = { p1: 0, p2: 0 };
       this.snapshotHistory = new Map();
@@ -2205,6 +2209,10 @@ export class Game {
     const inputState = this.captureLocalOnlineInput();
     this.onlineInputBuffer[slot].set(targetTick, inputState);
     this.onlineLastSentInputTick = targetTick;
+    const inputSignature = onlineInputSignature(inputState);
+    if (!this.shouldSendOnlineInputBundle(targetTick, inputSignature)) {
+      return;
+    }
     this.onlineInputSeq += 1;
     const firstTick = Math.max(0, targetTick - this.onlineInputBundleSize + 1);
     const inputs = [];
@@ -2212,7 +2220,7 @@ export class Game {
       const input = this.onlineInputBuffer[slot].get(tick);
       if (input) inputs.push({ tick, input: cloneOnlineInput(input) });
     }
-    this.p2pService?.send({
+    const sent = this.p2pService?.send({
       type: "inputBundle",
       slot,
       latestTick: targetTick,
@@ -2220,6 +2228,17 @@ export class Game {
       playerId: this.localPlayerId,
       inputs,
     }, { realtime: true });
+    if (sent) {
+      this.onlineLastInputBundleSentTick = targetTick;
+      this.onlineLastInputBundleSignature = inputSignature;
+    }
+  }
+
+  shouldSendOnlineInputBundle(targetTick, inputSignature) {
+    if (this.p2pChannelState !== "open") return false;
+    if (this.onlineLastInputBundleSentTick < 0) return true;
+    if (inputSignature !== this.onlineLastInputBundleSignature) return true;
+    return targetTick - this.onlineLastInputBundleSentTick >= 2;
   }
 
   updateOnlineGameTick(tick, { isResimulating = false } = {}) {
@@ -3903,6 +3922,22 @@ function inputsEqual(a, b) {
     left.extra === right.extra &&
     left.special === right.special
   );
+}
+
+function onlineInputSignature(input) {
+  const normalized = normalizeOnlineInput(input);
+  return [
+    normalized.left ? 1 : 0,
+    normalized.right ? 1 : 0,
+    normalized.up ? 1 : 0,
+    normalized.down ? 1 : 0,
+    normalized.attack ? 1 : 0,
+    normalized.skill1 ? 1 : 0,
+    normalized.skill2 ? 1 : 0,
+    normalized.movementSkill ? 1 : 0,
+    normalized.extra ? 1 : 0,
+    normalized.special ? 1 : 0,
+  ].join("");
 }
 
 function getControlsForCharacter(baseControls, characterId) {

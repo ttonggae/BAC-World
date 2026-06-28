@@ -15,6 +15,11 @@ const RTC_CONFIG = {
 };
 const MAX_BUFFERED_AMOUNT = 256 * 1024;
 const BUFFER_LOW_AMOUNT = 64 * 1024;
+const SERVICE_HEARTBEAT_MS = 2000;
+const INPUT_CHANNEL_OPTIONS = Object.freeze({
+  ordered: false,
+  maxPacketLifeTime: 1000,
+});
 
 function serializeDescription(description) {
   return {
@@ -78,6 +83,7 @@ export class P2PService {
     this.channel = null;
     this.inputChannel = null;
     this.unsubscribe = null;
+    this.heartbeatTimer = null;
     this.remoteDescriptionSet = false;
     this.processedCandidates = new Set();
     this.signalQueue = Promise.resolve();
@@ -115,9 +121,7 @@ export class P2PService {
     this.createPeer();
     this.channel = this.peer.createDataChannel("game");
     this.bindDataChannel(this.channel, "control");
-    this.inputChannel = this.peer.createDataChannel("input", {
-      ordered: false,
-    });
+    this.inputChannel = this.peer.createDataChannel("input", INPUT_CHANNEL_OPTIONS);
     this.bindDataChannel(this.inputChannel, "input");
     this.listenForSignals();
 
@@ -252,6 +256,7 @@ export class P2PService {
       if (kind === "control") {
         this.setChannelState(channel.readyState);
         this.setStatus("connected");
+        this.startServiceHeartbeat();
       } else {
         this.metrics.inputChannelState = channel.readyState;
       }
@@ -262,6 +267,7 @@ export class P2PService {
       if (kind === "control") {
         this.setChannelState(channel.readyState);
         this.setStatus("closed");
+        this.stopServiceHeartbeat();
       } else {
         this.metrics.inputChannelState = channel.readyState;
       }
@@ -269,12 +275,17 @@ export class P2PService {
       this.log(`${kind === "input" ? "Input" : "Data"}Channel closed.`);
     };
     channel.onerror = (event) => {
+      const error = event.error ?? event;
+      if (isUserCloseAbort(error)) {
+        this.log(`${kind === "input" ? "Input" : "Data"}Channel close acknowledged.`);
+        return;
+      }
       if (kind === "control") {
         this.setChannelState(channel.readyState);
-        this.fail("DataChannel error.", event.error ?? event);
+        this.fail("DataChannel error.", error);
       } else {
         this.metrics.inputChannelState = channel.readyState;
-        this.fail("Input DataChannel error.", event.error ?? event);
+        this.fail("Input DataChannel error.", error);
       }
     };
     channel.onbufferedamountlow = () => this.updateBufferedAmount();
@@ -340,6 +351,25 @@ export class P2PService {
     this.log("Sent ping.");
   }
 
+  startServiceHeartbeat() {
+    this.stopServiceHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.channel?.readyState !== "open") return;
+      this.send({
+        type: "ping",
+        time: Date.now(),
+        from: this.localPlayerId,
+        serviceHeartbeat: true,
+      }, { critical: true });
+    }, SERVICE_HEARTBEAT_MS);
+  }
+
+  stopServiceHeartbeat() {
+    if (!this.heartbeatTimer) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
   send(message, options = {}) {
     const realtimeChannel =
       options.realtime && this.inputChannel?.readyState === "open"
@@ -380,6 +410,7 @@ export class P2PService {
   closeLocal() {
     cleanupRoomListener(this.unsubscribe);
     this.unsubscribe = null;
+    this.stopServiceHeartbeat();
     if (this.channel) {
       this.channel.close();
       this.channel = null;
@@ -441,4 +472,9 @@ export class P2PService {
   emitMetrics() {
     if (this.onMetrics) this.onMetrics({ ...this.metrics });
   }
+}
+
+function isUserCloseAbort(error) {
+  const message = String(error?.message ?? error ?? "");
+  return message.includes("Close called") || message.includes("User-Initiated Abort");
 }
