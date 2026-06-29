@@ -167,6 +167,7 @@ export class Game {
     this.resyncRequestSeq = 0;
     this.resyncSnapshotSeq = 0;
     this.lastResyncAt = 0;
+    this.lastVisibilityResyncAt = 0;
     this.ignoreRemoteInputBeforeTick = -1;
     this.pendingInputDelayChange = null;
     this.showNetworkDebug = true;
@@ -616,6 +617,12 @@ export class Game {
 
     if (room.status === "ended") {
       if (this.gameState === "onlinePlaying") {
+        if (this.p2pChannelState === "open" && !this.shouldHardDisconnectOnline()) {
+          this.onlineNetworkStatus = "unstable";
+          this.updateNetworkStatus();
+          this.syncUi();
+          return;
+        }
         this.onlineStopReason = "Room ended";
         this.onlinePhase = "connectionLost";
         this.gameState = "onlineConnectionLost";
@@ -831,6 +838,7 @@ export class Game {
       this.sendNeutralInputBurst({ critical: true, reason: "visibility" });
     } else {
       this.sendResumeInputSignal();
+      this.requestVisibilityResumeResync("local visibility resume");
     }
     this.syncOnlineDebugText();
   }
@@ -857,6 +865,7 @@ export class Game {
       this.sendNeutralInputBurst({ critical: true, reason: "focus" });
     } else {
       this.sendResumeInputSignal();
+      this.requestVisibilityResumeResync("local focus resume");
     }
     this.syncOnlineDebugText();
   }
@@ -950,6 +959,27 @@ export class Game {
       seq: this.onlineInputSeq,
       playerId: this.localPlayerId,
     }, { critical: true });
+  }
+
+  requestVisibilityResumeResync(reason = "visibility resume") {
+    if (
+      this.gameState !== "onlinePlaying" ||
+      this.onlinePhase !== "playing" ||
+      this.p2pChannelState !== "open"
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastVisibilityResyncAt < 1000) return;
+    this.lastVisibilityResyncAt = now;
+    this.suppressOnlineChecksums(this.onlineRollbackWindow * 2);
+    this.beginOnlineResync(reason, {
+      tick: this.onlineTick,
+      localHidden: this.localHidden,
+      remoteHidden: this.remoteHidden,
+      visibilityResume: true,
+    });
   }
 
   async connectP2P() {
@@ -1857,6 +1887,7 @@ export class Game {
       this.resyncRequestSeq = 0;
       this.resyncSnapshotSeq = 0;
       this.lastResyncAt = 0;
+      this.lastVisibilityResyncAt = 0;
       this.ignoreRemoteInputBeforeTick = -1;
       this.pendingInputDelayChange = null;
       this.pingSamples = [];
@@ -2050,12 +2081,17 @@ export class Game {
       ? HIDDEN_HARD_TIMEOUT_MS
       : VISIBLE_HARD_TIMEOUT_MS;
 
-    if (this.p2pStatus === "failed" || metrics?.connectionState === "failed" || metrics?.iceConnectionState === "failed") {
+    const peerFailed =
+      metrics?.connectionState === "failed" ||
+      metrics?.iceConnectionState === "failed";
+    const serviceFailedWithoutOpenChannel =
+      this.p2pStatus === "failed" && this.p2pChannelState !== "open";
+    if (peerFailed || serviceFailedWithoutOpenChannel) {
       this.onlineNetworkStatus = "hard-failed";
       this.updateNetworkStatus();
       return;
     }
-    if (this.p2pChannelState === "closing" || this.p2pChannelState === "closed") {
+    if (this.p2pChannelState === "closed") {
       this.onlineNetworkStatus = "closed";
       this.updateNetworkStatus();
       return;
@@ -2093,8 +2129,7 @@ export class Game {
   shouldHardDisconnectOnline() {
     return (
       this.onlineNetworkStatus === "hard-failed" ||
-      this.onlineNetworkStatus === "closed" ||
-      this.onlineNetworkStatus === "timeout"
+      this.onlineNetworkStatus === "closed"
     );
   }
 
@@ -2148,13 +2183,18 @@ export class Game {
       return;
     }
 
-    if (this.isInputPredictionActive() || this.onlineNetworkStatus === "unstable") {
+    if (
+      this.isInputPredictionActive() ||
+      this.onlineNetworkStatus === "unstable" ||
+      this.onlineNetworkStatus === "timeout"
+    ) {
       this.setNetworkStatus("unstable", "연결 불안정 - 입력 예측 중", false);
       return;
     }
 
     this.setNetworkStatus("connected", "", false);
   }
+
   setNetworkStatus(level, message, hardDisconnected) {
     if (
       this.networkStatus.level !== level ||
@@ -3221,6 +3261,9 @@ export class Game {
       this.remoteHidden = Boolean(message.hidden);
       this.suppressOnlineChecksums();
       this.addP2PLog(this.remoteHidden ? "Peer window hidden." : "Peer window visible.");
+      if (!this.remoteHidden) {
+        this.requestVisibilityResumeResync("peer visibility resume");
+      }
       this.updateNetworkStatus();
       this.syncOnlineDebugText();
       return;
@@ -3237,6 +3280,7 @@ export class Game {
         this.suppressOnlineChecksums();
       }
       this.addP2PLog("Peer input resumed.");
+      this.requestVisibilityResumeResync("peer input resume");
       this.updateNetworkStatus();
       this.syncOnlineDebugText();
       return;
