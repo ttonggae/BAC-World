@@ -151,7 +151,7 @@ export class CharacterBase {
     this.invincibleTicks = Math.max(0, this.invincibleTicks - 1);
     this.hurtboxDisabledTicks = Math.max(0, this.hurtboxDisabledTicks - 1);
     this.updateBuffs(dt);
-    this.updateStatuses();
+    this.updateStatuses(context);
     this.updateStamina(dt);
 
     updateAbilityState(this, dt, context);
@@ -233,6 +233,10 @@ export class CharacterBase {
 
     if (this.controls.extra && input.wasPressed(this.controls.extra)) {
       useAbility(this, this.abilities.extra, context);
+    }
+
+    if (this.controls.extra2 && input.wasPressed(this.controls.extra2)) {
+      useAbility(this, this.abilities.extra2, context);
     }
 
     if (this.controls.special && input.wasPressed(this.controls.special)) {
@@ -320,9 +324,12 @@ export class CharacterBase {
     this.weaponFlash = 0;
   }
 
-  updateStatuses() {
+  updateStatuses(context = {}) {
     for (const [key, status] of Object.entries(this.activeStatuses)) {
       status.remainingTicks = Math.max(0, status.remainingTicks - 1);
+      if (status.statusId === "harpoonPull") {
+        this.applyHarpoonPull(status, context);
+      }
       if (
         (status.statusId === "burn" || status.statusId === "bleed") &&
         status.ticksApplied < (status.maxTicks ?? 0)
@@ -346,6 +353,22 @@ export class CharacterBase {
         delete this.activeStatuses[key];
       }
     }
+  }
+
+  applyHarpoonPull(status, context = {}) {
+    const source = context.characters?.[status.sourcePlayerIndex];
+    if (!source || !source.isAlive) return;
+    const distance = Math.max(0, status.distance ?? 42);
+    const facing = status.sourceFacing ?? source.facing;
+    const targetX =
+      facing >= 0
+        ? source.x + source.w + distance
+        : source.x - this.w - distance;
+    const delta = targetX - this.x;
+    const maxStep = Math.max(1, status.pullSpeed ?? 18);
+    const step = Math.max(-maxStep, Math.min(maxStep, delta));
+    this.x += step;
+    this.vx = 0;
   }
 
   isMovementRestricted() {
@@ -407,6 +430,10 @@ export class CharacterBase {
   }
 
   trySpendStamina(cost) {
+    if (!(cost > 0)) {
+      return true;
+    }
+
     if (this.stamina < cost) {
       this.staminaFlash = 0.22;
       return false;

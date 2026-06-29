@@ -375,6 +375,10 @@ export class CanvasRenderer {
       visualWeaponId && !passiveWeaponIds.has(visualWeaponId)
         ? EDITOR_WEAPONS[visualWeaponId]
         : null;
+    const actionImage =
+      visualWeaponId && !weapon && !passiveWeaponIds.has(visualWeaponId)
+        ? EDITOR_OTHER_IMAGES[visualWeaponId]
+        : null;
     for (const passiveWeapon of passiveWeapons) {
       if (passiveWeapon.layer === "back") this.drawCharacterWeapon(passiveWeapon);
     }
@@ -387,7 +391,10 @@ export class CanvasRenderer {
       ctx.fillRect(0, 0, character.w, character.h);
     }
 
+    this.drawStatusAttachments(character);
+
     if (weapon?.layer !== "back") this.drawCharacterWeapon(weapon);
+    if (actionImage) this.drawOtherImage(actionImage);
     for (const passiveWeapon of passiveWeapons) {
       if (passiveWeapon.layer !== "back") this.drawCharacterWeapon(passiveWeapon);
     }
@@ -486,6 +493,37 @@ export class CanvasRenderer {
     ctx.globalAlpha = image.opacity ?? 1;
     ctx.translate(image.position?.x ?? 0, image.position?.y ?? 0);
     this.drawVisualParts(image.visual.parts);
+    ctx.restore();
+  }
+
+  drawStatusAttachments(character) {
+    for (const status of Object.values(character.activeStatuses ?? {})) {
+      if (!status.visualWeaponId) continue;
+      const visual =
+        EDITOR_WEAPONS[status.visualWeaponId] ??
+        EDITOR_OTHER_IMAGES[status.visualWeaponId];
+      this.drawAttachedVisual(character, visual);
+    }
+  }
+
+  drawAttachedVisual(character, visual) {
+    const parts = visual?.visual?.parts ?? [];
+    if (parts.length === 0) return;
+    const minX = Math.min(...parts.map((part) => part.x));
+    const minY = Math.min(...parts.map((part) => part.y));
+    const maxX = Math.max(...parts.map((part) => part.x + part.w));
+    const maxY = Math.max(...parts.map((part) => part.y + part.h));
+    const visualWidth = maxX - minX;
+    const visualHeight = maxY - minY;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = visual.opacity ?? 1;
+    ctx.translate(
+      character.w / 2 - visualWidth / 2,
+      character.h / 2 - visualHeight / 2,
+    );
+    ctx.translate(-minX, -minY);
+    this.drawVisualParts(parts);
     ctx.restore();
   }
 
@@ -853,6 +891,7 @@ function getCooldownItems(character) {
     ["skill1", "K"],
     ["skill2", "L"],
     ["extra", ";"],
+    ["extra2", "M"],
     ["special", "N"],
   ];
 

@@ -38,6 +38,7 @@ const P1_CONTROLS = {
   skill2: "KeyL",
   movementSkill: "ShiftLeft",
   extra: "Semicolon",
+  extra2: "KeyM",
   special: "KeyN",
 };
 
@@ -51,6 +52,7 @@ const P2_CONTROLS = {
   skill2: "KeyL",
   movementSkill: "ShiftRight",
   extra: "Semicolon",
+  extra2: "KeyM",
   special: "KeyN",
 };
 
@@ -64,6 +66,7 @@ const ONLINE_P1_CONTROLS = {
   skill2: "OnlineP1Skill2",
   movementSkill: "OnlineP1MovementSkill",
   extra: "OnlineP1Extra",
+  extra2: "OnlineP1Extra2",
   special: "OnlineP1Special",
 };
 
@@ -77,6 +80,7 @@ const ONLINE_P2_CONTROLS = {
   skill2: "OnlineP2Skill2",
   movementSkill: "OnlineP2MovementSkill",
   extra: "OnlineP2Extra",
+  extra2: "OnlineP2Extra2",
   special: "OnlineP2Special",
 };
 
@@ -159,6 +163,11 @@ export class Game {
     this.predictionMissCount = 0;
     this.rollbackLogs = [];
     this.isResimulating = false;
+    this.resyncCount = 0;
+    this.resyncRequestSeq = 0;
+    this.resyncSnapshotSeq = 0;
+    this.lastResyncAt = 0;
+    this.ignoreRemoteInputBeforeTick = -1;
     this.pendingInputDelayChange = null;
     this.showNetworkDebug = true;
     this.pingSamples = [];
@@ -1844,6 +1853,11 @@ export class Game {
       this.predictionMissCount = 0;
       this.rollbackLogs = [];
       this.isResimulating = false;
+      this.resyncCount = 0;
+      this.resyncRequestSeq = 0;
+      this.resyncSnapshotSeq = 0;
+      this.lastResyncAt = 0;
+      this.ignoreRemoteInputBeforeTick = -1;
       this.pendingInputDelayChange = null;
       this.pingSamples = [];
       this.averagePing = null;
@@ -1966,6 +1980,12 @@ export class Game {
       }
       this.onlinePhase = "playing";
       this.onlineVirtualInput.reset();
+    }
+
+    if (this.onlinePhase === "resyncing") {
+      this.sendOnlineHeartbeatIfDue();
+      this.syncOnlineDebugText();
+      return;
     }
 
     this.applyPendingInputDelayChange();
@@ -2101,12 +2121,17 @@ export class Game {
       return;
     }
 
-    if (this.gameState === "onlineConnectionLost" && this.onlinePhase === "desync") {
-      this.setNetworkStatus("disconnected", "동기화 복구 불가 - 방으로 돌아가 주세요", true);
+    if (this.shouldHardDisconnectOnline()) {
+      this.setNetworkStatus("disconnected", "상대와의 연결이 끊겼습니다", true);
       return;
     }
 
-    if (this.shouldHardDisconnectOnline()) {
+    if (this.onlinePhase === "resyncing") {
+      this.setNetworkStatus("unstable", "동기화 복구 중...", false);
+      return;
+    }
+
+    if (this.gameState === "onlineConnectionLost") {
       this.setNetworkStatus("disconnected", "상대와의 연결이 끊겼습니다", true);
       return;
     }
@@ -2130,7 +2155,6 @@ export class Game {
 
     this.setNetworkStatus("connected", "", false);
   }
-
   setNetworkStatus(level, message, hardDisconnected) {
     if (
       this.networkStatus.level !== level ||
@@ -2803,9 +2827,15 @@ export class Game {
       extra:
         localCharacterId === "blade_hand"
           ? this.input.isDown("KeyK")
-          : localCharacterId === "inquisitor" || localCharacterId === "w_corp_cleaner"
+          : localCharacterId === "inquisitor" ||
+              localCharacterId === "w_corp_cleaner" ||
+              localCharacterId === "indigo_elder"
           ? this.input.isDown("KeyB")
           : this.input.isDown("Semicolon"),
+      extra2:
+        localCharacterId === "indigo_elder"
+          ? this.input.isDown("KeyM")
+          : false,
       skill1:
         localCharacterId === "blade_hand"
           ? this.input.isDown("KeyB")
@@ -2835,6 +2865,7 @@ export class Game {
 
     const orderedEntries = [...entries]
       .filter((entry) => Number.isInteger(Number(entry?.tick)) && Number(entry.tick) >= 0)
+      .filter((entry) => Number(entry.tick) > this.ignoreRemoteInputBeforeTick)
       .sort((a, b) => Number(a.tick) - Number(b.tick));
 
     for (const entry of orderedEntries) {
@@ -2944,6 +2975,10 @@ export class Game {
 
   stopOnlineForDesync(reason, detail = {}) {
     if (this.gameState === "onlineConnectionLost") return;
+    if (this.gameState === "onlinePlaying") {
+      this.beginOnlineResync(reason, detail);
+      return;
+    }
     this.onlineStopReason = reason;
     this.onlinePhase = "desync";
     this.gameState = "onlineConnectionLost";
@@ -2960,6 +2995,130 @@ export class Game {
       recentP2Inputs: this.getRecentInputs("p2", this.onlineTick, 12),
       rollbackLogs: this.rollbackLogs,
     });
+  }
+
+  beginOnlineResync(reason, detail = {}) {
+    const now = Date.now();
+    if (this.onlinePhase === "resyncing" && now - this.lastResyncAt < 1500) {
+      return;
+    }
+    this.onlineStopReason = reason;
+    this.onlinePhase = "resyncing";
+    this.desyncStatus = `RESYNCING: ${reason}`;
+    this.lastResyncAt = now;
+    this.resyncCount += 1;
+    this.pendingChecksumMismatches.clear();
+    this.reportedDesyncTicks.clear();
+    this.suppressOnlineChecksums(this.onlineRollbackWindow * 2);
+    this.addP2PLog(`Resync started: ${reason}`);
+    console.warn("BAC World online resync started", {
+      reason,
+      onlineTick: this.onlineTick,
+      role: this.onlineRole,
+      localSlot: this.currentSession?.localSlot,
+      detail,
+    });
+
+    if (this.isOnlineAuthorityHost()) {
+      this.sendOnlineResyncSnapshot(reason, detail);
+      this.finishOnlineResync(this.onlineTick, { authority: true });
+    } else {
+      this.requestOnlineResync(reason, detail);
+    }
+    this.updateNetworkStatus();
+    this.syncUi();
+  }
+
+  isOnlineAuthorityHost() {
+    return this.onlineRole === "host" || this.currentSession?.localSlot === "p1";
+  }
+
+  requestOnlineResync(reason, detail = {}) {
+    this.resyncRequestSeq += 1;
+    this.p2pService?.send({
+      type: "resyncRequest",
+      seq: this.resyncRequestSeq,
+      tick: this.onlineTick,
+      reason,
+      detail: {
+        tick: detail.tick ?? null,
+        local: detail.local ?? null,
+        remote: detail.remote ?? null,
+      },
+      from: this.localPlayerId,
+    }, { critical: true });
+  }
+
+  sendOnlineResyncSnapshot(reason = "resync", detail = {}) {
+    if (!this.match || this.p2pChannelState !== "open") return false;
+    const snapshot = this.createGameSnapshot();
+    if (!snapshot) return false;
+    this.resyncSnapshotSeq += 1;
+    const sent = this.p2pService?.send({
+      type: "resyncSnapshot",
+      seq: this.resyncSnapshotSeq,
+      tick: this.onlineTick,
+      reason,
+      snapshot,
+      inputDelayTicks: this.onlineInputDelayTicks,
+      rollbackWindow: this.onlineRollbackWindow,
+      from: this.localPlayerId,
+    }, { critical: true });
+    if (sent) {
+      this.addP2PLog(`Resync snapshot sent @ ${this.onlineTick}.`);
+    }
+    return Boolean(sent);
+  }
+
+  applyOnlineResyncSnapshot(message) {
+    if (this.gameState !== "onlinePlaying" || !message?.snapshot) return;
+    const snapshotTick = Number(message.tick ?? message.snapshot.onlineTick);
+    if (!Number.isFinite(snapshotTick)) return;
+    if (!this.restoreGameSnapshot(message.snapshot)) {
+      this.beginOnlineResync("Resync snapshot restore failed", { snapshotTick });
+      return;
+    }
+    this.finishOnlineResync(snapshotTick, { authority: false });
+    this.p2pService?.send({
+      type: "resyncAck",
+      seq: message.seq,
+      tick: this.onlineTick,
+      from: this.localPlayerId,
+    }, { critical: true });
+  }
+
+  finishOnlineResync(snapshotTick = this.onlineTick, { authority = false } = {}) {
+    const tick = Math.max(0, Number(snapshotTick) || this.onlineTick);
+    this.onlineTick = tick;
+    this.clearOnlineSyncHistory(tick);
+    this.onlineVirtualInput.reset();
+    if (this.match?.combat?.hitEvents) this.match.combat.hitEvents.length = 0;
+    if (this.match?.visualEvents) this.match.visualEvents.length = 0;
+    this.renderer?.resetEffects?.();
+    this.ignoreRemoteInputBeforeTick = tick;
+    this.onlineLastSentInputTick = Math.max(this.onlineLastSentInputTick, tick);
+    this.onlineLastReceivedInputTick = Math.max(this.onlineLastReceivedInputTick, tick);
+    this.onlineLastReceivedInputTicks.p1 = Math.max(this.onlineLastReceivedInputTicks.p1, tick);
+    this.onlineLastReceivedInputTicks.p2 = Math.max(this.onlineLastReceivedInputTicks.p2, tick);
+    this.ignoreChecksumUntilTick = Math.max(
+      this.ignoreChecksumUntilTick,
+      tick + this.onlineRollbackWindow,
+    );
+    this.desyncStatus = "RESYNC OK";
+    this.onlinePhase = "playing";
+    this.addP2PLog(`${authority ? "Authority" : "Remote"} resync applied @ ${tick}.`);
+    this.syncOnlineDebugText();
+  }
+
+  clearOnlineSyncHistory(tick = this.onlineTick) {
+    this.snapshotHistory = new Map();
+    this.localChecksums = new Map();
+    this.remoteChecksums = new Map();
+    this.checksumDetails = new Map();
+    this.pendingChecksumMismatches = new Map();
+    this.reportedDesyncTicks = new Set();
+    this.predictedInputBuffer = createOnlineInputBuffer();
+    this.onlineInputBuffer = createOnlineInputBuffer();
   }
 
   handleP2PDataMessage(message) {
@@ -2986,6 +3145,36 @@ export class Game {
       if (Number.isInteger(message.effectiveTick)) {
         this.pendingInputDelayChange.effectiveTick = message.effectiveTick;
       }
+      return;
+    }
+
+    if (message.type === "resyncRequest" && this.gameState === "onlinePlaying") {
+      if (this.isOnlineAuthorityHost()) {
+        this.desyncStatus = `RESYNC requested @ ${message.tick ?? "-"}`;
+        this.sendOnlineResyncSnapshot(message.reason ?? "peer resync request", {
+          tick: message.tick,
+          requester: message.from,
+        });
+      }
+      return;
+    }
+
+    if (message.type === "resyncSnapshot" && this.gameState === "onlinePlaying") {
+      if (!this.isOnlineAuthorityHost()) {
+        this.applyOnlineResyncSnapshot(message);
+      }
+      return;
+    }
+
+    if (message.type === "resyncAck") {
+      this.addP2PLog(`Peer resync ack @ ${message.tick ?? "-"}.`);
+      return;
+    }
+
+    if (
+      this.onlinePhase === "resyncing" &&
+      (message.type === "inputBundle" || message.type === "input" || message.type === "checksum")
+    ) {
       return;
     }
 
@@ -3693,6 +3882,7 @@ export class Game {
     const skill = ABILITIES[character.abilities.skill1];
     const skill2 = ABILITIES[character.abilities.skill2];
     const extra = ABILITIES[character.abilities.extra];
+    const extra2 = ABILITIES[character.abilities.extra2];
     const special = ABILITIES[character.abilities.special];
     const rows = [
       ["HP", character.stats.maxHp],
@@ -3712,6 +3902,7 @@ export class Game {
       [character.actionInputs?.skill2 ?? "L", skill2 ? skill2.name : "None"],
     );
     if (extra) rows.push([character.actionInputs?.extra ?? ";", extra.name]);
+    if (extra2) rows.push([character.actionInputs?.extra2 ?? "M", extra2.name]);
     if (special) {
       rows.push([character.actionInputs?.special ?? "N", special.name]);
     }
@@ -3840,6 +4031,7 @@ export class Game {
       `Window: ${this.onlineRollbackWindow} / ` +
       `Last Rollback: ${this.lastRollbackTick ?? "-"} / ` +
       `Rollbacks: ${this.rollbackCount} / Misses: ${this.predictionMissCount} / ` +
+      `Resyncs: ${this.resyncCount} / LastResync: ${this.lastResyncAt ? `${Date.now() - this.lastResyncAt}ms ago` : "-"} / ` +
       `Sent: ${this.onlineLastSentInputTick} / ` +
       `Recv P1: ${this.onlineLastReceivedInputTicks.p1} / ` +
       `Recv P2: ${this.onlineLastReceivedInputTicks.p2} / ` +
@@ -3881,6 +4073,7 @@ function createEmptyOnlineInput() {
     skill2: false,
     movementSkill: false,
     extra: false,
+    extra2: false,
     special: false,
   };
 }
@@ -3921,6 +4114,7 @@ function normalizeOnlineInput(input = {}) {
     skill2: Boolean(input.skill2),
     movementSkill: Boolean(input.movementSkill),
     extra: Boolean(input.extra),
+    extra2: Boolean(input.extra2),
     special: Boolean(input.special),
   };
 }
@@ -3979,6 +4173,7 @@ function addMappedInput(target, input, controls) {
   if (input.skill2) target.add(controls.skill2);
   if (input.movementSkill && controls.movementSkill) target.add(controls.movementSkill);
   if (input.extra && controls.extra) target.add(controls.extra);
+  if (input.extra2 && controls.extra2) target.add(controls.extra2);
   if (input.special && controls.special) target.add(controls.special);
 }
 
@@ -3999,6 +4194,7 @@ function inputsEqual(a, b) {
     left.skill2 === right.skill2 &&
     left.movementSkill === right.movementSkill &&
     left.extra === right.extra &&
+    left.extra2 === right.extra2 &&
     left.special === right.special
   );
 }
@@ -4015,6 +4211,7 @@ function onlineInputSignature(input) {
     normalized.skill2 ? 1 : 0,
     normalized.movementSkill ? 1 : 0,
     normalized.extra ? 1 : 0,
+    normalized.extra2 ? 1 : 0,
     normalized.special ? 1 : 0,
   ].join("");
 }
@@ -4031,7 +4228,8 @@ function onlineInputToMask(input) {
     (normalized.skill2 ? 1 << 6 : 0) |
     (normalized.movementSkill ? 1 << 7 : 0) |
     (normalized.extra ? 1 << 8 : 0) |
-    (normalized.special ? 1 << 9 : 0)
+    (normalized.extra2 ? 1 << 9 : 0) |
+    (normalized.special ? 1 << 10 : 0)
   );
 }
 
@@ -4047,7 +4245,8 @@ function onlineInputFromMask(mask) {
     skill2: Boolean(value & (1 << 6)),
     movementSkill: Boolean(value & (1 << 7)),
     extra: Boolean(value & (1 << 8)),
-    special: Boolean(value & (1 << 9)),
+    extra2: Boolean(value & (1 << 9)),
+    special: Boolean(value & (1 << 10)),
   };
 }
 
@@ -4092,6 +4291,15 @@ function getControlsForCharacter(baseControls, characterId) {
       extra: "KeyB",
       special: "KeyN",
       movementSkill: "KeyM",
+    };
+  }
+  if (characterId === "indigo_elder") {
+    return {
+      ...baseControls,
+      extra: "KeyB",
+      extra2: "KeyM",
+      special: "KeyN",
+      movementSkill: baseControls.movementSkill ?? "ShiftLeft",
     };
   }
   return { ...baseControls };
@@ -4452,3 +4660,4 @@ function hashString(value) {
 function clonePlainObject(value) {
   return JSON.parse(JSON.stringify(value ?? {}));
 }
+

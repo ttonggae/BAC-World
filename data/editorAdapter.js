@@ -43,6 +43,12 @@ import {
   OTHER_IMAGE_DATA as BLADE_HAND_OTHER_IMAGE_DATA,
   WEAPON_DATA as BLADE_HAND_WEAPON_DATA,
 } from "./editorBladeHand.js";
+import {
+  ACTION_DATA as INDIGO_ELDER_ACTION_DATA,
+  CHARACTER_DATA as INDIGO_ELDER_CHARACTER_DATA,
+  OTHER_IMAGE_DATA as INDIGO_ELDER_OTHER_IMAGE_DATA,
+  WEAPON_DATA as INDIGO_ELDER_WEAPON_DATA,
+} from "./editorIndigoElder.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -104,6 +110,13 @@ const DATA_SOURCES = [
     namespace: "blade",
     skipActionIds: ["sinho"],
   },
+  {
+    characters: INDIGO_ELDER_CHARACTER_DATA,
+    actions: INDIGO_ELDER_ACTION_DATA,
+    weapons: INDIGO_ELDER_WEAPON_DATA,
+    otherImages: INDIGO_ELDER_OTHER_IMAGE_DATA,
+    namespace: "indigo",
+  },
 ];
 
 export function adaptEditorCharacters() {
@@ -142,6 +155,7 @@ export function adaptEditorCharacters() {
               character.actionSlots.movementSkill,
             ),
             extra: getRuntimeId(namespace, character.actionSlots.extra),
+            extra2: getRuntimeId(namespace, character.actionSlots.extra2),
             special: getRuntimeId(namespace, character.actionSlots.special),
           },
           actionIds: (character.actionIds ?? []).map((id) => getRuntimeId(namespace, id)),
@@ -159,6 +173,7 @@ export function adaptEditorCharacters() {
             skill1: getInput(character.actionSlots.skill1),
             skill2: getInput(character.actionSlots.skill2),
             extra: getInput(character.actionSlots.extra),
+            extra2: getInput(character.actionSlots.extra2),
             special: getInput(character.actionSlots.special),
             movementSkill: getInput(character.actionSlots.movementSkill),
           },
@@ -263,7 +278,7 @@ export function adaptEditorActions() {
             chargeCost: action.chargeCost ?? 0,
             chargeOnUse: action.chargeOnUse ?? 0,
             selfDamageOnChargeFail: action.selfDamageOnChargeFail ?? 0,
-            effects: adaptEffects(action),
+            effects: adaptEffects(action, namespace),
             effectsImplemented: true,
             castLockTicks: action.lockActions
               ? action.startup + action.recovery
@@ -386,8 +401,11 @@ function adaptProjectile(action, namespace) {
   };
 }
 
-function adaptEffects(action) {
-  const effects = action.effects?.map((effect) => ({ ...effect })) ?? [];
+function adaptEffects(action, namespace = "") {
+  const effects = action.effects?.map((effect) => ({
+    ...effect,
+    visualWeaponId: getRuntimeId(namespace, effect.visualWeaponId),
+  })) ?? [];
   if (action.statusOnHit) {
     const status = action.statusOnHit;
     effects.push({
@@ -424,6 +442,7 @@ function adaptStance(stance, namespace) {
             skill2: getRuntimeId(namespace, mode.actionSlots.skill2),
             movementSkill: getRuntimeId(namespace, mode.actionSlots.movementSkill),
             extra: getRuntimeId(namespace, mode.actionSlots.extra),
+            extra2: getRuntimeId(namespace, mode.actionSlots.extra2),
             special: getRuntimeId(namespace, mode.actionSlots.special),
           },
         },

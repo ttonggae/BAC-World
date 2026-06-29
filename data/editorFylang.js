@@ -32,7 +32,7 @@ export const FYLANG_CHARACTER_DATA = {
     extraActionIds: [],
     stats: {
       hp: 80,
-      stamina: 60,
+      stamina: 65,
       staminaRegen: 15,
       staminaRegenDelay: 0.45,
       moveSpeed: 260,
@@ -206,7 +206,7 @@ export const FYLANG_ACTION_DATA = {
     input: "K",
     slot: "skill1",
     damage: 10,
-    staminaCost: 20,
+    staminaCost: 10,
     startup: 15,
     active: 6,
     recovery: 0,
@@ -214,7 +214,7 @@ export const FYLANG_ACTION_DATA = {
     lockActions: true,
     activeWeaponVisualId: "sword_weapon",
     hitboxes: [{ type: "rect", name: "sword_guard", x: 20, y: 0, w: 64, h: 35 }],
-    effects: [{ type: "recoverStamina", maxAmount: 30 }],
+    effects: [{ type: "recoverStamina", restore: "full" }],
     knockback: { x: 350, y: -120 },
   },
   sword_l: {

@@ -34,6 +34,7 @@ export class OfflineMatch {
       combat: this.combat,
       visualEvents: this.visualEvents,
       simulationTick: this.simulationTick,
+      characters: this.characters,
     };
 
     for (const character of this.characters) {

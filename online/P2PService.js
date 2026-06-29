@@ -328,6 +328,9 @@ export class P2PService {
       message.type !== "netcodeConfig" &&
       message.type !== "visibility" &&
       message.type !== "resumeInput" &&
+      message.type !== "resyncRequest" &&
+      message.type !== "resyncSnapshot" &&
+      message.type !== "resyncAck" &&
       message.type !== "debug" &&
       message.type !== "ping" &&
       message.type !== "pong"

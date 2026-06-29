@@ -142,7 +142,7 @@ export class CombatSystem {
         (projectile.destroyOnWall !== false &&
           hitsSolid(projectile, map.getSolidPlatforms()))
       ) {
-        projectile.life = 0;
+        destroyProjectile(projectile);
         continue;
       }
 
@@ -177,7 +177,7 @@ export class CombatSystem {
         this.hitEvents.push(hitEvent);
         this.lastHit = { attacker: projectile.owner, target, hitEvent };
         if (projectile.destroyOnHit !== false || (projectile.pierce ?? 0) <= 0) {
-          projectile.life = 0;
+          destroyProjectile(projectile);
         } else {
           projectile.pierce -= 1;
         }
@@ -190,6 +190,13 @@ export class CombatSystem {
         ? projectile.lifeTicks > 0
         : projectile.life > 0,
     );
+  }
+}
+
+function destroyProjectile(projectile) {
+  projectile.life = 0;
+  if (Number.isInteger(projectile.lifeTicks)) {
+    projectile.lifeTicks = 0;
   }
 }
 
@@ -253,7 +260,10 @@ function applyHitEffects(hitbox, target) {
       hpStolen += amount;
       hpRecovered += owner.health - before;
     } else if (effect.type === "recoverStamina") {
-      const amount = Math.max(0, effect.maxAmount ?? 0);
+      const amount =
+        effect.restore === "full"
+          ? owner.maxStamina
+          : Math.max(0, effect.maxAmount ?? 0);
       const before = owner.stamina;
       owner.stamina = Math.min(owner.maxStamina, owner.stamina + amount);
       staminaRecovered += owner.stamina - before;
@@ -264,6 +274,24 @@ function applyHitEffects(hitbox, target) {
         ...effect,
         sourceId: `${hitbox.owner.playerIndex}:${hitbox.abilityId}:${effect.statusId}`,
       });
+    } else if (effect.type === "pullToOwner") {
+      if ((effect.durationTicks ?? 0) > 0) {
+        target.addStatus({
+          ...effect,
+          statusId: "harpoonPull",
+          sourceId: `${hitbox.owner.playerIndex}:${hitbox.abilityId}:pull`,
+          sourcePlayerIndex: hitbox.owner.playerIndex,
+          sourceFacing: hitbox.owner.facing,
+        });
+      } else {
+        const distance = Math.max(0, effect.distance ?? 42);
+        if (owner.facing >= 0) {
+          target.x = owner.x + owner.w + distance;
+        } else {
+          target.x = owner.x - target.w - distance;
+        }
+        target.vx = 0;
+      }
     }
   }
 

@@ -49,7 +49,7 @@ export const W_CORP_CLEANER_CHARACTER_DATA = {
       "moveSpeed": 275,
       "jumpPower": 600,
       "weight": 1,
-      "maxChargeStack": 10
+      "maxChargeStack": 15
     },
     "visual": {
       "parts": [
@@ -5962,7 +5962,7 @@ export const W_CORP_CLEANER_ACTION_DATA = {
       {
         "type": "addCharge",
         "amount": 1,
-        "max": 10
+        "max": 15
       }
     ],
     "knockback": {
@@ -6003,7 +6003,7 @@ export const W_CORP_CLEANER_ACTION_DATA = {
       {
         "type": "addCharge",
         "amount": 5,
-        "max": 10
+        "max": 15
       }
     ],
     "knockback": {
@@ -6023,6 +6023,7 @@ export const W_CORP_CLEANER_ACTION_DATA = {
     "description": "?? ??? ?? ??? ??? ???.",
     "damage": 8,
     "staminaCost": 10,
+    "chargeCost": 1,
     "startup": 8,
     "active": 120,
     "recovery": 8,
@@ -6120,10 +6121,10 @@ export const W_CORP_CLEANER_ACTION_DATA = {
     "kind": "melee",
     "input": "N",
     "slot": "special",
-    "description": "Charge Stack 10? ??? ?? ?? ??? ?????. ??? ???? ??? 15 ??? ????.",
+    "description": "Charge Stack 13? ??? ?? ?? ??? ?????. ??? ???? ??? 15 ??? ????.",
     "damage": 35,
     "staminaCost": 40,
-    "chargeCost": 10,
+    "chargeCost": 13,
     "selfDamageOnChargeFail": 15,
     "startup": 24,
     "active": 15,
@@ -6135,10 +6136,10 @@ export const W_CORP_CLEANER_ACTION_DATA = {
       {
         "type": "rect",
         "name": "spatial_rend_hitbox_1",
-        "x": -71,
-        "y": -67,
-        "w": 274,
-        "h": 153
+        "x": -24,
+        "y": -45,
+        "w": 176,
+        "h": 108
       }
     ],
     "effects": [
@@ -6166,7 +6167,7 @@ export const W_CORP_CLEANER_ACTION_DATA = {
     "kind": "movement",
     "input": "M",
     "slot": "movementSkill",
-    "description": "151px ??? ??? ???? Charge Stack? 3 ????. ?? ? ??? ?? ?? ????? ?????.",
+    "description": "151px ??? ??? ???? Charge Stack? 2 ????. ?? ? ??? ?? ?? ????? ?????.",
     "damage": 0,
     "staminaCost": 12,
     "startup": 2,
@@ -6182,7 +6183,7 @@ export const W_CORP_CLEANER_ACTION_DATA = {
       "duration": 12,
       "stopOnEnd": true
     },
-    "chargeOnUse": 3,
+    "chargeOnUse": 2,
     "invincibleTicks": 12,
     "hurtboxDisabledTicks": 12,
     "knockback": {
