@@ -110,9 +110,15 @@ export function useAbility(player, abilityId, context) {
     return false;
   }
 
+  if (!hasAbilityAmmo(player, ability)) {
+    return false;
+  }
+
   if (!player.trySpendStamina(ability.staminaCost ?? 0)) {
     return false;
   }
+
+  spendAbilityAmmo(player, ability);
 
   if (ability.type === "stanceSwitch") {
     applyStanceSwitch(player, ability);
@@ -180,7 +186,9 @@ export function useAbility(player, abilityId, context) {
   }
 
   if (ability.type === "reload") {
-    if ((ability.startup ?? 0) > 0) {
+    if ((ability.reload?.delayTicks ?? 0) > 0) {
+      beginTimedPendingAbility(player, ability, ability.reload.delayTicks);
+    } else if ((ability.startup ?? 0) > 0) {
       beginPendingAbility(player, ability);
     } else {
       applyReload(player, ability);
@@ -201,6 +209,12 @@ export function useAbility(player, abilityId, context) {
     }
     player.skillFlash =
       ability.movement?.durationSeconds ?? ability.moveTime ?? 0.16;
+    return true;
+  }
+
+  if (ability.type === "smokeArea") {
+    spawnSmokeArea(player, ability, context);
+    player.skillFlash = ability.duration ?? 0.5;
     return true;
   }
 
@@ -247,6 +261,9 @@ function applyMovementAbility(player, ability) {
   }
   if ((ability.hurtboxDisabledTicks ?? 0) > 0) {
     player.hurtboxDisabledTicks = ability.hurtboxDisabledTicks;
+  }
+  if ((ability.statusImmuneTicks ?? 0) > 0) {
+    player.statusImmuneTicks = ability.statusImmuneTicks;
   }
 }
 
@@ -603,6 +620,16 @@ function beginPendingAbility(player, ability) {
   };
 }
 
+function beginTimedPendingAbility(player, ability, ticks) {
+  const durationTicks = Math.max(0, ticks ?? 0);
+  player.pendingAbility = {
+    abilityId: ability.id,
+    startupRemaining: durationTicks / (ability.tickRate ?? 60),
+    startupTicksRemaining: durationTicks,
+    released: false,
+  };
+}
+
 function releasePendingAbility(player, ability, context) {
   if (ability.type === "projectile") {
     player.pendingAbility.released = true;
@@ -665,6 +692,38 @@ function releaseAbilityHitbox(player, ability, context) {
     effects: (ability.effects ?? []).map((effect) => ({ ...effect })),
   });
   player.pendingAbility = null;
+}
+
+function spawnSmokeArea(player, ability, context) {
+  const hitbox = ability.hitbox ?? { w: 120, h: 120, yOffset: 0 };
+  const spawnTick = Number(context.simulationTick) || 0;
+  const x = player.x + player.w / 2 - hitbox.w / 2;
+  const y = player.y + player.h / 2 - hitbox.h / 2 + (hitbox.yOffset ?? 0);
+  const areaInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  context.combat.spawnArea({
+    id: areaInstanceId,
+    areaInstanceId,
+    owner: player,
+    abilityId: ability.id,
+    x,
+    y,
+    w: hitbox.w,
+    h: hitbox.h,
+    hitboxes: [{ x, y, w: hitbox.w, h: hitbox.h }],
+    damage: 0,
+    knockback: { x: 0, y: 0 },
+    durationTicks: ability.durationTicks ?? Math.ceil((ability.duration ?? 0.5) * 60),
+    damageIntervalTicks: 1,
+    tickRate: ability.tickRate ?? 60,
+    friendlyFireSelf: true,
+    defensiveSmoke: true,
+    hurtboxDisabledTicks: 2,
+    speedBonus: ability.speedBonus ?? 0,
+    fillColor: "rgba(120, 130, 150, 0.32)",
+    strokeColor: "rgba(225, 231, 238, 0.52)",
+    effectType: ability.useEffectType,
+    screenShake: ability.screenShake,
+  });
 }
 
 function releaseEditorHitboxes(player, ability, context) {
@@ -904,6 +963,9 @@ function detonateEditorProjectile(player, ability, projectile, context) {
 }
 
 function applyReload(player, ability) {
+  if ((ability.reload?.ammo ?? 0) > 0) {
+    player.restoreAmmo?.(ability.reload.ammo);
+  }
   if (ability.reload?.restore === "full") {
     player.stamina = player.maxStamina;
     player.staminaRegenTimer = 0;
@@ -911,6 +973,11 @@ function applyReload(player, ability) {
 }
 
 function trySpendAbilityCharge(player, ability) {
+  if (ability.requireMaxChargeStack && player.chargeStack < player.maxChargeStack) {
+    player.staminaFlash = 0.22;
+    return false;
+  }
+
   const cost = ability.chargeCost ?? 0;
   if (!(cost > 0)) return true;
   if (player.trySpendChargeStack?.(cost)) return true;
@@ -920,6 +987,31 @@ function trySpendAbilityCharge(player, ability) {
     player.takeSelfDamage?.(selfDamage);
   }
   return false;
+}
+
+function hasAbilityAmmo(player, ability) {
+  const cost = ability.ammoCost ?? 0;
+  if (ability.requiresAmmo && !player.hasAmmo?.(Math.max(1, cost))) {
+    player.staminaFlash = 0.22;
+    return false;
+  }
+  return true;
+}
+
+function spendAbilityAmmo(player, ability) {
+  const cost = ability.ammoCost ?? 0;
+  if (ability.consumeAllAmmo) {
+    player.spendAllAmmo?.();
+  } else if (cost > 0 && !player.spendAmmo?.(cost)) {
+    return false;
+  }
+
+  if (ability.consumeAllChargeStacks) {
+    player.chargeStack = 0;
+    player.chargeStackDecayTimer = 0;
+  }
+
+  return true;
 }
 
 function applyChargeOnUse(player, ability) {

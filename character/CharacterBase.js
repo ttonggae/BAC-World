@@ -64,6 +64,12 @@ export class CharacterBase {
     this.stamina = stats.maxStamina;
     this.maxChargeStack = stats.maxChargeStack ?? 0;
     this.chargeStack = 0;
+    this.maxAmmo = stats.maxAmmo ?? 0;
+    this.ammo = this.maxAmmo;
+    this.ammoReloadAmount = stats.ammoReloadAmount ?? 0;
+    this.chargeStackSpeedBonus = stats.chargeStackSpeedBonus ?? 0;
+    this.chargeStackDecayTicks = stats.chargeStackDecayTicks ?? 0;
+    this.chargeStackDecayTimer = 0;
     this.staminaRegenRate = staminaConfig.regenRate;
     this.staminaRegenDelay = staminaConfig.regenDelay;
     this.staminaRegenTimer = 0;
@@ -87,12 +93,13 @@ export class CharacterBase {
     this.modeSwapBonusBasicAttackReady = false;
     this.modeSwapBonusActionId = null;
     this.modeSwapBonusDamage = 0;
-    this.currentStanceIndicatorId = null;
+    this.currentStanceIndicatorId = data.defaultOtherImageId ?? null;
     if (this.stance?.modes?.[this.currentStanceMode]) {
       const mode = this.stance.modes[this.currentStanceMode];
       this.abilities = { ...this.abilities, ...mode.actionSlots };
       this.defaultWeaponId = mode.weaponId ?? this.defaultWeaponId;
-      this.currentStanceIndicatorId = mode.indicatorId ?? null;
+      this.currentStanceIndicatorId =
+        mode.indicatorId ?? this.currentStanceIndicatorId;
     }
     this.onGround = false;
     this.dropTimer = 0;
@@ -101,6 +108,9 @@ export class CharacterBase {
     this.dashTicks = 0;
     this.dashStopOnEnd = false;
     this.sustainedMoveSpeedBonus = 0;
+    this.areaMoveSpeedBonus = 0;
+    this.areaMoveSpeedBonusTicks = 0;
+    this.smokeHurtboxDisabled = false;
     this.hitStun = 0;
     this.hitFlash = 0;
     this.attackFlash = 0;
@@ -136,6 +146,8 @@ export class CharacterBase {
     }
     this.staminaFlash = Math.max(0, this.staminaFlash - dt);
     this.sustainedMoveSpeedBonus = 0;
+    this.areaMoveSpeedBonus = 0;
+    this.areaMoveSpeedBonusTicks = 0;
     this.dashTimer = Math.max(0, this.dashTimer - dt);
     const previousDashTicks = this.dashTicks;
     this.dashTicks = Math.max(0, this.dashTicks - 1);
@@ -159,6 +171,7 @@ export class CharacterBase {
     this.statusImmuneTicks = Math.max(0, this.statusImmuneTicks - 1);
     this.updateBuffs(dt);
     this.updateStatuses(context);
+    this.updateChargeStackDecay();
     this.updateStamina(dt);
 
     updateAbilityState(this, dt, context);
@@ -190,7 +203,9 @@ export class CharacterBase {
         this.facing = direction;
         const moveSpeed =
           this.movement.speed * this.getMoveSpeedMultiplier() +
-          this.sustainedMoveSpeedBonus;
+          this.sustainedMoveSpeedBonus +
+          this.getDefensiveSmokeSpeedBonus(context) +
+          (this.chargeStack ?? 0) * (this.chargeStackSpeedBonus ?? 0);
         this.vx = moveToward(
           this.vx,
           direction * moveSpeed,
@@ -418,7 +433,19 @@ export class CharacterBase {
   }
 
   get isHurtboxDisabled() {
-    return this.hurtboxDisabledTicks > 0;
+    return this.hurtboxDisabledTicks > 0 || this.smokeHurtboxDisabled;
+  }
+
+  getDefensiveSmokeSpeedBonus(context = {}) {
+    let bonus = 0;
+    for (const area of context.combat?.areas ?? []) {
+      if (!area.defensiveSmoke) continue;
+      if (area.owner !== this) continue;
+      if (area.hitboxes?.some((box) => overlaps(box, this.bounds))) {
+        bonus = Math.max(bonus, area.speedBonus ?? 0);
+      }
+    }
+    return bonus;
   }
 
   getMoveSpeedMultiplier() {
@@ -477,6 +504,9 @@ export class CharacterBase {
     const limit = Math.max(0, max ?? this.maxChargeStack);
     const before = this.chargeStack;
     this.chargeStack = Math.min(limit, this.chargeStack + amount);
+    if (this.chargeStack > before && (this.chargeStackDecayTicks ?? 0) > 0) {
+      this.chargeStackDecayTimer = this.chargeStackDecayTicks;
+    }
     return this.chargeStack - before;
   }
 
@@ -488,6 +518,42 @@ export class CharacterBase {
     }
     this.chargeStack = Math.max(0, this.chargeStack - cost);
     return true;
+  }
+
+  updateChargeStackDecay() {
+    if (!(this.chargeStackDecayTicks > 0) || !(this.chargeStack > 0)) return;
+    this.chargeStackDecayTimer = Math.max(0, (this.chargeStackDecayTimer ?? 0) - 1);
+    if (this.chargeStackDecayTimer > 0) return;
+    this.chargeStack = Math.max(0, this.chargeStack - 1);
+    this.chargeStackDecayTimer = this.chargeStack > 0 ? this.chargeStackDecayTicks : 0;
+  }
+
+  hasAmmo(amount = 1) {
+    if (!(this.maxAmmo > 0)) return true;
+    return this.ammo >= amount;
+  }
+
+  spendAmmo(amount = 1) {
+    if (!(this.maxAmmo > 0) || !(amount > 0)) return true;
+    if (this.ammo < amount) {
+      this.staminaFlash = 0.22;
+      return false;
+    }
+    this.ammo = Math.max(0, this.ammo - amount);
+    return true;
+  }
+
+  spendAllAmmo() {
+    const spent = Math.max(0, this.ammo ?? 0);
+    this.ammo = 0;
+    return spent;
+  }
+
+  restoreAmmo(amount) {
+    if (!(this.maxAmmo > 0) || !(amount > 0)) return 0;
+    const before = this.ammo;
+    this.ammo = Math.min(this.maxAmmo, this.ammo + amount);
+    return this.ammo - before;
   }
 
   takeSelfDamage(amount) {

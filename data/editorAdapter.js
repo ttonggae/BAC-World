@@ -49,6 +49,12 @@ import {
   OTHER_IMAGE_DATA as INDIGO_ELDER_OTHER_IMAGE_DATA,
   WEAPON_DATA as INDIGO_ELDER_WEAPON_DATA,
 } from "./editorIndigoElder.js";
+import {
+  ACTION_DATA as UNDERBOSS_ACTION_DATA,
+  CHARACTER_DATA as UNDERBOSS_CHARACTER_DATA,
+  OTHER_IMAGE_DATA as UNDERBOSS_OTHER_IMAGE_DATA,
+  WEAPON_DATA as UNDERBOSS_WEAPON_DATA,
+} from "./editorUnderboss.js";
 
 const TICK_RATE = BAC_EDITOR_SCHEMA.timing.tickRate;
 const ticksToSeconds = (ticks = 0) => ticks / TICK_RATE;
@@ -117,6 +123,13 @@ const DATA_SOURCES = [
     otherImages: INDIGO_ELDER_OTHER_IMAGE_DATA,
     namespace: "indigo",
   },
+  {
+    characters: UNDERBOSS_CHARACTER_DATA,
+    actions: UNDERBOSS_ACTION_DATA,
+    weapons: UNDERBOSS_WEAPON_DATA,
+    otherImages: UNDERBOSS_OTHER_IMAGE_DATA,
+    namespace: "underboss",
+  },
 ];
 
 export function adaptEditorCharacters() {
@@ -144,7 +157,15 @@ export function adaptEditorCharacters() {
             weight: character.stats.weight,
             staminaRegenRate: character.stats.staminaRegen,
             staminaRegenDelay: character.stats.staminaRegenDelay,
-            maxChargeStack: character.stats.maxChargeStack ?? 0,
+            maxChargeStack:
+              namespace === "underboss" ? 5 : character.stats.maxChargeStack ?? 0,
+            maxAmmo: namespace === "underboss" ? 10 : character.stats.maxAmmo ?? 0,
+            ammoReloadAmount:
+              namespace === "underboss" ? 5 : character.stats.ammoReloadAmount ?? 0,
+            chargeStackSpeedBonus:
+              namespace === "underboss" ? 20 : character.stats.chargeStackSpeedBonus ?? 0,
+            chargeStackDecayTicks:
+              namespace === "underboss" ? 300 : character.stats.chargeStackDecayTicks ?? 0,
           },
           abilities: {
             basicAttack: getRuntimeId(namespace, character.actionSlots.basicAttack),
@@ -179,6 +200,10 @@ export function adaptEditorCharacters() {
           },
           sourceDefaultWeaponId: character.defaultWeaponId,
           sourceDefaultActionId: character.defaultActionId,
+          defaultOtherImageId:
+            namespace === "underboss"
+              ? getRuntimeId(namespace, "fight_pose")
+              : getRuntimeId(namespace, character.defaultOtherImageId),
           stance: adaptStance(character.stance, namespace),
           visual: character.visual,
           editorSchemaVersion: BAC_EDITOR_SCHEMA.version,
@@ -196,6 +221,7 @@ export function adaptEditorActions() {
         .filter((action) => !skipActionIds.includes(action.id))
         .map((action) => {
         const runtimeId = getRuntimeId(namespace, action.id);
+        const underbossMeta = adaptUnderbossAction(action, namespace);
         return [
           runtimeId,
           {
@@ -209,10 +235,9 @@ export function adaptEditorActions() {
               namespace,
               action.startupWeaponVisualId,
             ),
-            activeWeaponVisualId: getRuntimeId(
-              namespace,
-              action.activeWeaponVisualId,
-            ),
+            activeWeaponVisualId:
+              underbossMeta.activeWeaponVisualId ??
+              getRuntimeId(namespace, action.activeWeaponVisualId),
             editorAction: true,
             tickRate: TICK_RATE,
             damage: action.damage,
@@ -271,22 +296,36 @@ export function adaptEditorActions() {
                     : null,
                 }
               : null,
-            reload: action.reload ? { ...action.reload } : null,
+            reload: underbossMeta.reload ?? (action.reload ? { ...action.reload } : null),
+            ammoCost: underbossMeta.ammoCost ?? action.ammoCost ?? 0,
+            consumeAllAmmo: Boolean(underbossMeta.consumeAllAmmo ?? action.consumeAllAmmo),
+            requiresAmmo: Boolean(underbossMeta.requiresAmmo ?? action.requiresAmmo),
+            requireMaxChargeStack:
+              underbossMeta.requireMaxChargeStack ?? action.requireMaxChargeStack ?? false,
+            consumeAllChargeStacks: Boolean(
+              underbossMeta.consumeAllChargeStacks ?? action.consumeAllChargeStacks,
+            ),
             moveSpeedBonus: action.moveSpeedBonus ?? 0,
             sustainStaminaCostPerSecond:
               action.sustainStaminaCostPerSecond ?? 0,
             chargeCost: action.chargeCost ?? 0,
             chargeOnUse: action.chargeOnUse ?? 0,
             selfDamageOnChargeFail: action.selfDamageOnChargeFail ?? 0,
-            effects: adaptEffects(action, namespace),
+            effects: [...adaptEffects(action, namespace), ...underbossMeta.effects],
             effectsImplemented: true,
-            castLockTicks: action.lockActions
-              ? action.startup + action.recovery
-              : action.kind === "projectile"
+            castLockTicks:
+              underbossMeta.castLockTicks ??
+              (action.lockActions
                 ? action.startup + action.recovery
-                : 0,
+                : action.kind === "projectile"
+                  ? action.startup + action.recovery
+                  : 0),
             invincibleTicks:
-              action.invincibleTicks ?? (action.kind === "movement" ? action.active ?? 0 : 0),
+              underbossMeta.invincibleTicks ??
+              action.invincibleTicks ??
+              (action.kind === "movement" ? action.active ?? 0 : 0),
+            statusImmuneTicks:
+              underbossMeta.statusImmuneTicks ?? action.statusImmuneTicks ?? 0,
             hurtboxDisabledTicks: action.hurtboxDisabledTicks ?? 0,
             superArmorDuringStartup: action.superArmorDuringStartup
               ? { ...action.superArmorDuringStartup }
@@ -337,9 +376,70 @@ export const EDITOR_OTHER_IMAGES = Object.fromEntries(
 );
 
 function adaptActionType(action) {
+  if (action.id === "reload") return "reload";
+  if (action.id === "sting_dash") return "dashMelee";
   if (action.id === "baekskip") return "dashMelee";
   if (action.kind === "effectMelee") return "effectMelee";
   return action.kind;
+}
+
+function adaptUnderbossAction(action, namespace) {
+  if (namespace !== "underboss") {
+    return { effects: [] };
+  }
+
+  const attackIds = new Set(["normal_attack", "vertical_cut", "sting_dash"]);
+  const ammoSkillIds = new Set([
+    "normal_attack",
+    "vertical_cut",
+    "sting_dash",
+    "disposal_backstep",
+  ]);
+
+  if (action.id === "reload") {
+    return {
+      effects: [],
+      reload: { ammo: 5, delayTicks: 120 },
+      ammoCost: 0,
+      requiresAmmo: false,
+      activeWeaponVisualId: getRuntimeId(namespace, "reload_pose"),
+      castLockTicks: 120,
+    };
+  }
+
+  if (action.id === "evasion_execute") {
+    return {
+      effects: [
+        { type: "status", statusId: "stun", durationTicks: 60, refreshRule: "refresh" },
+        { type: "addCharge", amount: 5, max: 5 },
+        { type: "restoreAmmo", amount: 10 },
+      ],
+      ammoCost: 0,
+      requiresAmmo: true,
+      requireMaxChargeStack: true,
+      consumeAllAmmo: true,
+      consumeAllChargeStacks: true,
+      activeWeaponVisualId: getRuntimeId(namespace, "evasion_pose"),
+      castLockTicks: 72,
+    };
+  }
+
+  const visualByAction = {
+    normal_attack: "horizontal_slash_effect",
+    vertical_cut: "vertical_slash_effect",
+    sting_dash: "sting_pose",
+  };
+
+  return {
+    effects: attackIds.has(action.id) ? [{ type: "addCharge", amount: 1, max: 5 }] : [],
+    ammoCost: ammoSkillIds.has(action.id) ? 1 : 0,
+    requiresAmmo: ammoSkillIds.has(action.id),
+    activeWeaponVisualId: visualByAction[action.id]
+      ? getRuntimeId(namespace, visualByAction[action.id])
+      : null,
+    invincibleTicks: action.id === "disposal_backstep" ? 12 : null,
+    statusImmuneTicks: action.id === "disposal_backstep" ? 12 : null,
+  };
 }
 
 function adaptMovement(action) {
@@ -357,6 +457,28 @@ function adaptMovement(action) {
       duration: action.active ?? 8,
       durationSeconds: ticksToSeconds(action.active ?? 8),
       speed: 520,
+      stopOnEnd: true,
+    };
+  }
+
+  if (action.id === "disposal_backstep") {
+    return {
+      type: "dash",
+      direction: "backward",
+      duration: action.active ?? 12,
+      durationSeconds: ticksToSeconds(action.active ?? 12),
+      speed: 250,
+      stopOnEnd: true,
+    };
+  }
+
+  if (action.id === "sting_dash") {
+    return {
+      type: "dash",
+      direction: "facing",
+      duration: action.active ?? 18,
+      durationSeconds: ticksToSeconds(action.active ?? 18),
+      speed: 668,
       stopOnEnd: true,
     };
   }

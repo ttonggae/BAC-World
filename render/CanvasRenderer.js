@@ -425,12 +425,8 @@ export class CanvasRenderer {
         ctx.arc(burstX, effect.y + (effect.h ?? 8) / 2, 12 + t * 18, 0, Math.PI * 2);
         ctx.stroke();
       } else if (effect.effectType === "smokeBomb") {
-        const size = 120;
-        ctx.fillStyle = "rgba(185, 190, 196, 0.28)";
-        ctx.strokeStyle = "rgba(225, 231, 238, 0.52)";
-        ctx.lineWidth = 2;
-        ctx.fillRect(effect.x - size / 2, effect.y - size / 2, size, size);
-        ctx.strokeRect(effect.x - size / 2, effect.y - size / 2, size, size);
+        // Defensive smoke is rendered from combat areas so the visual matches
+        // the exact active hitbox instead of a separate fixed-size flash.
       } else {
         ctx.strokeRect(effect.x - 22, effect.y - 18, 44, 36);
       }
@@ -937,8 +933,10 @@ export class CanvasRenderer {
       character.maxChargeStack > 0
         ? ` / CH ${character.chargeStack ?? 0}/${character.maxChargeStack}`
         : "";
+    const ammoText =
+      character.maxAmmo > 0 ? ` / AM ${character.ammo ?? 0}/${character.maxAmmo}` : "";
     ctx.fillText(
-      `P${character.playerIndex + 1} Cooldowns${chargeText}`,
+      `P${character.playerIndex + 1} Cooldowns${chargeText}${ammoText}`,
       panelX + 12,
       panelY + 8,
     );

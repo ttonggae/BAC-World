@@ -69,6 +69,8 @@ export class OfflineMatch {
     character.health = character.maxHealth;
     character.stamina = character.maxStamina;
     character.chargeStack = 0;
+    character.ammo = character.maxAmmo ?? 0;
+    character.chargeStackDecayTimer = 0;
     character.staminaRegenTimer = 0;
     character.cooldowns = {};
     character.cooldownTicks = {};
@@ -86,6 +88,8 @@ export class OfflineMatch {
     character.invincibleTicks = 0;
     character.hurtboxDisabledTicks = 0;
     character.statusImmuneTicks = 0;
+    character.areaMoveSpeedBonus = 0;
+    character.areaMoveSpeedBonusTicks = 0;
     character.hitStun = 0;
     character.hitFlash = 0.18;
     character.attackFlash = 0;

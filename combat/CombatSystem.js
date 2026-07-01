@@ -46,6 +46,9 @@ export class CombatSystem {
 
   update(dt, characters, map) {
     this.lastHit = null;
+    for (const character of characters) {
+      character.smokeHurtboxDisabled = false;
+    }
     this.updateAreas(characters);
     this.updateProjectiles(dt, characters, map);
 
@@ -95,6 +98,14 @@ export class CombatSystem {
 
   updateAreas(characters) {
     for (const area of this.areas) {
+      if (!area.defensiveSmoke) continue;
+      this.applyDefensiveSmoke(area, characters);
+      area.elapsedTicks += 1;
+      area.remainingTicks -= 1;
+    }
+
+    for (const area of this.areas) {
+      if (area.defensiveSmoke) continue;
       for (const target of characters) {
         const targetId = getTargetId(target);
         if (
@@ -123,6 +134,19 @@ export class CombatSystem {
       area.remainingTicks -= 1;
     }
     this.areas = this.areas.filter((area) => area.remainingTicks > 0);
+  }
+
+  applyDefensiveSmoke(area, characters) {
+    for (const target of characters) {
+      if (
+        target !== area.owner ||
+        !target.isAlive ||
+        !area.hitboxes.some((box) => intersects(box, target.bounds))
+      ) {
+        continue;
+      }
+      target.smokeHurtboxDisabled = true;
+    }
   }
 
   updateProjectiles(dt, characters, map) {
@@ -269,6 +293,8 @@ function applyHitEffects(hitbox, target) {
       staminaRecovered += owner.stamina - before;
     } else if (effect.type === "addCharge") {
       chargeGained += owner.addChargeStack?.(effect.amount ?? 0, effect.max) ?? 0;
+    } else if (effect.type === "restoreAmmo") {
+      owner.restoreAmmo?.(effect.amount ?? 0);
     } else if (effect.type === "status" && effect.statusId) {
       target.addStatus({
         ...effect,

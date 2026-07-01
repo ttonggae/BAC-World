@@ -2686,6 +2686,8 @@ export class Game {
         quantize(character.stamina),
         quantize(character.staminaRegenTimer),
         character.chargeStack ?? 0,
+        character.ammo ?? 0,
+        character.chargeStackDecayTimer ?? 0,
         character.facing,
         character.onGround ? 1 : 0,
         this.map?.platforms?.indexOf(character.groundPlatform) ?? -1,
@@ -2702,6 +2704,8 @@ export class Game {
         character.invincibleTicks ?? 0,
         character.hurtboxDisabledTicks ?? 0,
         character.statusImmuneTicks ?? 0,
+        character.areaMoveSpeedBonus ?? 0,
+        character.areaMoveSpeedBonusTicks ?? 0,
         character.currentStanceMode ?? "",
         character.modeSwapBonusBasicAttackReady ? 1 : 0,
         character.modeSwapBonusActionId ?? "",
@@ -2742,6 +2746,9 @@ export class Game {
         area.remainingTicks ?? 0,
         area.elapsedTicks ?? 0,
         area.friendlyFireSelf ? 1 : 0,
+        area.defensiveSmoke ? 1 : 0,
+        area.speedBonus ?? 0,
+        area.hurtboxDisabledTicks ?? 0,
         ...[...(area.lastDamageTickByTargetId ?? new Map()).entries()].flat(),
       ]),
       quantize(this.roundTimer),
@@ -2760,6 +2767,8 @@ export class Game {
       stamina: character.stamina,
       staminaRegenTimer: character.staminaRegenTimer,
       chargeStack: character.chargeStack ?? 0,
+      ammo: character.ammo ?? 0,
+      chargeStackDecayTimer: character.chargeStackDecayTimer ?? 0,
       facing: character.facing,
       onGround: character.onGround,
       groundPlatformIndex: this.map?.platforms?.indexOf(character.groundPlatform) ?? -1,
@@ -2776,6 +2785,8 @@ export class Game {
       invincibleTicks: character.invincibleTicks,
       hurtboxDisabledTicks: character.hurtboxDisabledTicks,
       statusImmuneTicks: character.statusImmuneTicks,
+      areaMoveSpeedBonus: character.areaMoveSpeedBonus ?? 0,
+      areaMoveSpeedBonusTicks: character.areaMoveSpeedBonusTicks ?? 0,
       currentStanceMode: character.currentStanceMode,
       modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
       modeSwapBonusActionId: character.modeSwapBonusActionId,
@@ -2811,6 +2822,9 @@ export class Game {
         remainingTicks: area.remainingTicks,
         elapsedTicks: area.elapsedTicks,
         friendlyFireSelf: area.friendlyFireSelf,
+        defensiveSmoke: area.defensiveSmoke,
+        speedBonus: area.speedBonus,
+        hurtboxDisabledTicks: area.hurtboxDisabledTicks,
         lastDamageTickEntries: [
           ...(area.lastDamageTickByTargetId ?? new Map()).entries(),
         ],
@@ -2875,7 +2889,8 @@ export class Game {
           ? this.input.isDown("KeyK")
           : localCharacterId === "inquisitor" ||
               localCharacterId === "w_corp_cleaner" ||
-              localCharacterId === "indigo_elder"
+              localCharacterId === "indigo_elder" ||
+              localCharacterId === "underboss"
           ? this.input.isDown("KeyB")
           : this.input.isDown("Semicolon"),
       extra2:
@@ -2887,7 +2902,9 @@ export class Game {
           ? this.input.isDown("KeyB")
           : this.input.isDown("KeyK"),
       special:
-        localCharacterId === "fylang_character" || localCharacterId === "hai_ht2"
+        localCharacterId === "fylang_character" ||
+        localCharacterId === "hai_ht2" ||
+        localCharacterId === "underboss"
           ? this.input.isDown("Space")
           : localCharacterId === "blade_hand"
             ? false
@@ -4376,6 +4393,14 @@ function getControlsForCharacter(baseControls, characterId) {
       movementSkill: baseControls.movementSkill ?? "ShiftLeft",
     };
   }
+  if (characterId === "underboss") {
+    return {
+      ...baseControls,
+      extra: "KeyB",
+      special: "Space",
+      movementSkill: baseControls.movementSkill ?? "ShiftLeft",
+    };
+  }
   return { ...baseControls };
 }
 
@@ -4412,6 +4437,9 @@ function serializeCharacter(character) {
     stamina: character.stamina,
     maxStamina: character.maxStamina,
     chargeStack: character.chargeStack ?? 0,
+    ammo: character.ammo ?? 0,
+    maxAmmo: character.maxAmmo ?? 0,
+    chargeStackDecayTimer: character.chargeStackDecayTimer ?? 0,
     maxChargeStack: character.maxChargeStack ?? 0,
     cooldowns: { ...character.cooldowns },
     cooldownTicks: { ...character.cooldownTicks },
@@ -4437,6 +4465,8 @@ function serializeCharacter(character) {
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     statusImmuneTicks: character.statusImmuneTicks,
+    areaMoveSpeedBonus: character.areaMoveSpeedBonus ?? 0,
+    areaMoveSpeedBonusTicks: character.areaMoveSpeedBonusTicks ?? 0,
     dashStopOnEnd: character.dashStopOnEnd,
     actionWeaponVisualId: character.actionWeaponVisualId,
     actionWeaponVisualTicks: character.actionWeaponVisualTicks,
@@ -4464,6 +4494,9 @@ function applyCharacterSnapshot(character, snapshot) {
   character.stamina = snapshot.stamina;
   character.maxStamina = snapshot.maxStamina;
   character.chargeStack = snapshot.chargeStack ?? 0;
+  character.ammo = snapshot.ammo ?? character.ammo ?? 0;
+  character.maxAmmo = snapshot.maxAmmo ?? character.maxAmmo ?? 0;
+  character.chargeStackDecayTimer = snapshot.chargeStackDecayTimer ?? 0;
   character.maxChargeStack = snapshot.maxChargeStack ?? character.maxChargeStack ?? 0;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
   character.cooldownTicks = { ...(snapshot.cooldownTicks ?? {}) };
@@ -4489,6 +4522,8 @@ function applyCharacterSnapshot(character, snapshot) {
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
   character.statusImmuneTicks = snapshot.statusImmuneTicks ?? 0;
+  character.areaMoveSpeedBonus = snapshot.areaMoveSpeedBonus ?? 0;
+  character.areaMoveSpeedBonusTicks = snapshot.areaMoveSpeedBonusTicks ?? 0;
   character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
   character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
   character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
@@ -4533,6 +4568,8 @@ function serializeCharacterSnapshot(character, map) {
     health: character.health,
     stamina: character.stamina,
     chargeStack: character.chargeStack ?? 0,
+    ammo: character.ammo ?? 0,
+    chargeStackDecayTimer: character.chargeStackDecayTimer ?? 0,
     staminaRegenTimer: character.staminaRegenTimer,
     staminaFlash: character.staminaFlash,
     cooldowns: { ...character.cooldowns },
@@ -4553,6 +4590,8 @@ function serializeCharacterSnapshot(character, map) {
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
     statusImmuneTicks: character.statusImmuneTicks,
+    areaMoveSpeedBonus: character.areaMoveSpeedBonus ?? 0,
+    areaMoveSpeedBonusTicks: character.areaMoveSpeedBonusTicks ?? 0,
     onGround: character.onGround,
     groundPlatformIndex: character.groundPlatform
       ? map.platforms.indexOf(character.groundPlatform)
@@ -4589,6 +4628,8 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.health = snapshot.health;
   character.stamina = snapshot.stamina;
   character.chargeStack = snapshot.chargeStack ?? 0;
+  character.ammo = snapshot.ammo ?? character.ammo ?? 0;
+  character.chargeStackDecayTimer = snapshot.chargeStackDecayTimer ?? 0;
   character.staminaRegenTimer = snapshot.staminaRegenTimer;
   character.staminaFlash = snapshot.staminaFlash;
   character.cooldowns = { ...(snapshot.cooldowns ?? {}) };
@@ -4609,6 +4650,8 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
   character.statusImmuneTicks = snapshot.statusImmuneTicks ?? 0;
+  character.areaMoveSpeedBonus = snapshot.areaMoveSpeedBonus ?? 0;
+  character.areaMoveSpeedBonusTicks = snapshot.areaMoveSpeedBonusTicks ?? 0;
   character.onGround = Boolean(snapshot.onGround);
   character.groundPlatform =
     Number.isInteger(snapshot.groundPlatformIndex) ? map.platforms[snapshot.groundPlatformIndex] : null;
@@ -4704,6 +4747,9 @@ function copyCombatFields(entity) {
     visualWeaponId: entity.visualWeaponId,
     excludePartNames: [...(entity.excludePartNames ?? [])],
     friendlyFireSelf: Boolean(entity.friendlyFireSelf),
+    defensiveSmoke: Boolean(entity.defensiveSmoke),
+    speedBonus: entity.speedBonus ?? 0,
+    hurtboxDisabledTicks: entity.hurtboxDisabledTicks ?? 0,
     facing: entity.facing,
     followOwner: Boolean(entity.followOwner),
     sourceFacing: entity.sourceFacing,
