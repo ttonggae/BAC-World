@@ -66,6 +66,7 @@ export class CanvasRenderer {
     this.ctx.scale(view.scale, view.scale);
     this.drawBackground(state.map);
     this.drawPlatforms(state.map.platforms);
+    this.drawMapVisualEffects(state.map, state.simulationTick ?? 0);
     this.drawUseEffects();
     this.drawAreas(state.combat.areas ?? []);
     this.drawProjectiles(state.combat.projectiles ?? []);
@@ -182,10 +183,12 @@ export class CanvasRenderer {
   }
 
   addUseEffect(event) {
+    const isShark = event.effectType === "sharkBite";
+    const isSmoke = event.effectType === "smokeBomb";
     this.useEffects.push({
       ...event,
-      life: event.effectType === "slamCharge" ? 0.3 : 0.18,
-      maxLife: event.effectType === "slamCharge" ? 0.3 : 0.18,
+      life: isShark ? 0.62 : isSmoke ? 0.5 : event.effectType === "slamCharge" ? 0.3 : 0.18,
+      maxLife: isShark ? 0.62 : isSmoke ? 0.5 : event.effectType === "slamCharge" ? 0.3 : 0.18,
     });
   }
 
@@ -219,8 +222,30 @@ export class CanvasRenderer {
 
   drawBackground(map) {
     const ctx = this.ctx;
-    ctx.fillStyle = map.backgroundColor ?? "#20252d";
+    if (map.background?.type === "gradient") {
+      const gradient = ctx.createLinearGradient(0, 0, 0, map.height);
+      gradient.addColorStop(0, map.background.colorTop ?? map.backgroundColor ?? "#20252d");
+      gradient.addColorStop(1, map.background.colorBottom ?? map.backgroundColor ?? "#20252d");
+      ctx.fillStyle = gradient;
+    } else {
+      ctx.fillStyle = map.backgroundColor ?? "#20252d";
+    }
     ctx.fillRect(0, 0, map.width, map.height);
+
+    for (const part of map.background?.decorativeParts ?? []) {
+      if (part.type !== "rect") continue;
+      ctx.save();
+      ctx.globalAlpha = part.opacity ?? 1;
+      ctx.fillStyle = part.fill ?? "rgba(255,255,255,0.12)";
+      if (part.rotation) {
+        ctx.translate(part.x + part.w / 2, part.y + part.h / 2);
+        ctx.rotate(part.rotation);
+        ctx.fillRect(-part.w / 2, -part.h / 2, part.w, part.h);
+      } else {
+        ctx.fillRect(part.x, part.y, part.w, part.h);
+      }
+      ctx.restore();
+    }
 
     ctx.strokeStyle = "rgba(255,255,255,0.05)";
     ctx.lineWidth = 1;
@@ -242,7 +267,7 @@ export class CanvasRenderer {
     const ctx = this.ctx;
     for (const platform of platforms) {
       if (platform.type === "solid") {
-        ctx.fillStyle = "#3d4651";
+        ctx.fillStyle = getPlatformColor(platform);
         ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
         ctx.fillStyle = "rgba(255,255,255,0.12)";
         ctx.fillRect(platform.x, platform.y, platform.w, 4);
@@ -252,6 +277,50 @@ export class CanvasRenderer {
         ctx.fillStyle = "rgba(183,193,90,0.22)";
         ctx.fillRect(platform.x, platform.y + 6, platform.w, platform.h - 6);
       }
+    }
+  }
+
+  drawMapVisualEffects(map, simulationTick) {
+    if (!map.visualEffects?.length) return;
+    const ctx = this.ctx;
+    for (const effect of map.visualEffects) {
+      if (effect.type !== "scrollingLines") continue;
+      const area = effect.area;
+      const direction = effect.tiedToGimmick
+        ? map.getGimmickDirection(effect.tiedToGimmick, simulationTick)
+        : "right";
+      const phaseTick = effect.tiedToGimmick
+        ? map.getGimmickPhaseTick(effect.tiedToGimmick, simulationTick)
+        : simulationTick;
+      const sign = direction === "left" ? -1 : 1;
+      const gimmick = map.gimmicks?.find((entry) => entry.id === effect.tiedToGimmick);
+      const visualSpeed = effect.speed ?? Math.max(0.8, (gimmick?.forceX ?? 85) / 60);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(area.x, area.y, area.w, area.h);
+      ctx.clip();
+
+      ctx.globalAlpha = Math.max(0.12, (effect.opacity ?? 0.25) * 0.75);
+      ctx.fillStyle = effect.color ?? "#66d9ef";
+      const waveHeights = [18, 23, 30, 40, 50, 42, 32, 24];
+      const boxWidth = 64;
+      const waveWidth = waveHeights.length * boxWidth;
+      const waveOffset = (phaseTick * visualSpeed * sign) % waveWidth;
+      for (let x = area.x - waveWidth * 2; x < area.x + area.w + waveWidth * 2; x += waveWidth) {
+        const baseX = x + waveOffset;
+        for (let index = 0; index < waveHeights.length; index += 1) {
+          const height = waveHeights[index];
+          const barX = baseX + index * boxWidth;
+          const barY = area.y + area.h - height - 4;
+          ctx.fillRect(barX, barY, boxWidth, height);
+        }
+      }
+      if (phaseTick < 10) {
+        ctx.globalAlpha = 0.16 * (1 - phaseTick / 10);
+        ctx.fillStyle = effect.color ?? "#66d9ef";
+        ctx.fillRect(area.x, area.y, area.w, area.h);
+      }
+      ctx.restore();
     }
   }
 
@@ -343,11 +412,65 @@ export class CanvasRenderer {
         const w = 46 + t * 34;
         const x = effect.x + effect.facing * (26 + t * 26);
         ctx.fillRect(x - w / 2, effect.y - 18, w, 36);
+      } else if (effect.effectType === "sharkBite") {
+        this.drawSharkBiteEffect(effect, t);
+      } else if (effect.effectType === "chargedHitscan") {
+        ctx.fillStyle = "rgba(255, 223, 86, 0.42)";
+        ctx.strokeStyle = "rgba(255, 244, 176, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.fillRect(effect.x, effect.y, effect.w ?? 720, effect.h ?? 8);
+        ctx.strokeRect(effect.x, effect.y, effect.w ?? 720, effect.h ?? 8);
+        const burstX = effect.facing >= 0 ? effect.x + (effect.w ?? 720) : effect.x;
+        ctx.beginPath();
+        ctx.arc(burstX, effect.y + (effect.h ?? 8) / 2, 12 + t * 18, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (effect.effectType === "smokeBomb") {
+        const size = 120;
+        ctx.fillStyle = "rgba(185, 190, 196, 0.28)";
+        ctx.strokeStyle = "rgba(225, 231, 238, 0.52)";
+        ctx.lineWidth = 2;
+        ctx.fillRect(effect.x - size / 2, effect.y - size / 2, size, size);
+        ctx.strokeRect(effect.x - size / 2, effect.y - size / 2, size, size);
       } else {
         ctx.strokeRect(effect.x - 22, effect.y - 18, 44, 36);
       }
       ctx.restore();
     }
+  }
+
+  drawSharkBiteEffect(effect, t) {
+    const ctx = this.ctx;
+    const rise = Math.sin(Math.PI * t) * 24;
+    const x = effect.x;
+    const y = effect.y - rise;
+    const w = effect.width ?? 76;
+    const h = effect.height ?? 62;
+
+    ctx.fillStyle = "rgba(10, 18, 24, 0.86)";
+    ctx.beginPath();
+    ctx.moveTo(x, y - h * 0.62);
+    ctx.lineTo(x - w * 0.42, y + h * 0.1);
+    ctx.quadraticCurveTo(x, y + h * 0.28, x + w * 0.42, y + h * 0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(220, 238, 244, 0.86)";
+    for (let index = -2; index <= 2; index += 1) {
+      const toothX = x + index * 9;
+      ctx.beginPath();
+      ctx.moveTo(toothX, y - h * 0.46);
+      ctx.lineTo(toothX - 4, y - h * 0.28);
+      ctx.lineTo(toothX + 4, y - h * 0.28);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = "rgba(102, 217, 239, 0.38)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.5, effect.y + 5);
+    ctx.quadraticCurveTo(x, effect.y + 15, x + w * 0.5, effect.y + 5);
+    ctx.stroke();
   }
 
   drawCharacter(character) {
@@ -415,8 +538,12 @@ export class CanvasRenderer {
     }
 
     if (character.attackFlash > 0 || character.skillFlash > 0) {
-      ctx.strokeStyle = character.skillFlash > 0 ? "#7df7ff" : "#fff4b0";
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = character.chargeShotState
+        ? getChargeShotOutlineColor(character.chargeShotState)
+        : character.skillFlash > 0
+          ? "#7df7ff"
+          : "#fff4b0";
+      ctx.lineWidth = character.chargeShotState?.stageIndex >= 0 ? 5 : 3;
       ctx.strokeRect(-2, -2, character.w + 4, character.h + 4);
     }
 
@@ -933,7 +1060,27 @@ function drawDiamond(ctx, x, y, size) {
   ctx.fill();
 }
 
+function getPlatformColor(platform) {
+  if (platform.material === "wet_wood") return "#4a3f38";
+  if (platform.material === "stone") return "#344150";
+  return "#3d4651";
+}
+
+function getChargeShotOutlineColor(state) {
+  if (state.stageIndex >= 2 || state.isFull) return "#ffdf56";
+  if (state.stageIndex >= 1) return "#7df7ff";
+  if (state.stageIndex >= 0) return "#a6f06a";
+  return "#9aa3ad";
+}
+
 function getHitboxColor(type) {
+  if (type === "hitscan") {
+    return {
+      fill: "rgba(255, 223, 86, 0.36)",
+      stroke: "rgba(255, 244, 176, 0.9)",
+    };
+  }
+
   if (type === "areaAttack") {
     return {
       fill: "rgba(255, 125, 94, 0.28)",

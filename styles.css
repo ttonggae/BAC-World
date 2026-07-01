@@ -441,6 +441,11 @@ body {
   line-height: 1.35;
 }
 
+.map-card .map-card-meta {
+  color: #7df7ff;
+  font-size: 11px;
+}
+
 .character-preview {
   width: 42px;
   height: 42px;

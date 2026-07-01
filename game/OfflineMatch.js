@@ -77,6 +77,7 @@ export class OfflineMatch {
     character.activeHazards = {};
     character.usedOnceAbilities = {};
     character.pendingAbility = null;
+    character.chargeShotState = null;
     character.castLockTicks = 0;
     character.comboNextActionId = null;
     character.comboWindowTicks = 0;
@@ -84,6 +85,7 @@ export class OfflineMatch {
     character.crowdControlArmorTicks = 0;
     character.invincibleTicks = 0;
     character.hurtboxDisabledTicks = 0;
+    character.statusImmuneTicks = 0;
     character.hitStun = 0;
     character.hitFlash = 0.18;
     character.attackFlash = 0;
@@ -114,6 +116,7 @@ export class OfflineMatch {
       combat: this.combat,
       visualEvents: this.visualEvents,
       winner: this.winner,
+      simulationTick: this.simulationTick,
     };
   }
 }

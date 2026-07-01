@@ -1,5 +1,9 @@
 import { horizontalOverlap } from "../core/AABB.js";
-import { updateAbilityState, useAbility } from "../abilities/AbilityBase.js";
+import {
+  updateAbilityState,
+  updateChargeReleaseAbility,
+  useAbility,
+} from "../abilities/AbilityBase.js";
 import { ABILITIES } from "../data/abilities.js";
 
 const DROP_THROUGH_TIME = 0.22;
@@ -31,6 +35,7 @@ export class CharacterBase {
     this.activeHazards = {};
     this.usedOnceAbilities = {};
     this.pendingAbility = null;
+    this.chargeShotState = null;
     this.castLockTicks = 0;
     this.comboNextActionId = null;
     this.comboWindowTicks = 0;
@@ -38,6 +43,7 @@ export class CharacterBase {
     this.crowdControlArmorTicks = 0;
     this.invincibleTicks = 0;
     this.hurtboxDisabledTicks = 0;
+    this.statusImmuneTicks = 0;
     this.weight = stats.weight;
     this.movement = {
       speed: stats.moveSpeed,
@@ -150,6 +156,7 @@ export class CharacterBase {
     this.crowdControlArmorTicks = Math.max(0, this.crowdControlArmorTicks - 1);
     this.invincibleTicks = Math.max(0, this.invincibleTicks - 1);
     this.hurtboxDisabledTicks = Math.max(0, this.hurtboxDisabledTicks - 1);
+    this.statusImmuneTicks = Math.max(0, this.statusImmuneTicks - 1);
     this.updateBuffs(dt);
     this.updateStatuses(context);
     this.updateStamina(dt);
@@ -167,6 +174,8 @@ export class CharacterBase {
 
     this.applyGravity(dt);
     this.moveAndCollide(dt, context.map);
+    context.map.applyGimmicksToCharacter?.(this, context.simulationTick ?? 0, dt);
+    context.map.rescueCharacterIfOutOfBounds?.(this, context);
   }
 
   handleInput(dt, context, canControlMovement = true) {
@@ -208,11 +217,22 @@ export class CharacterBase {
     }
 
     const basicAttack = ABILITIES[this.abilities.basicAttack];
-    const attackPressed = basicAttack?.behavior === "holdFire"
-      ? input.isDown(this.controls.attack)
-      : input.wasPressed(this.controls.attack);
-    if (attackPressed) {
-      useAbility(this, this.abilities.basicAttack, context);
+    if (basicAttack?.behavior === "chargeRelease") {
+      updateChargeReleaseAbility(
+        this,
+        basicAttack,
+        dt,
+        input,
+        context,
+        this.controls.attack,
+      );
+    } else {
+      const attackPressed = basicAttack?.behavior === "holdFire"
+        ? input.isDown(this.controls.attack)
+        : input.wasPressed(this.controls.attack);
+      if (attackPressed) {
+        useAbility(this, this.abilities.basicAttack, context);
+      }
     }
 
     if (input.wasPressed(this.controls.skill1)) {
@@ -269,6 +289,12 @@ export class CharacterBase {
     for (const [buffId, buff] of Object.entries(this.buffs)) {
       buff.remaining -= dt;
       if (buff.remaining <= 0) {
+        if (buff.cooldownAbilityId && (buff.cooldownAfterEnd ?? 0) > 0) {
+          this.cooldowns[buff.cooldownAbilityId] = Math.max(
+            this.cooldowns[buff.cooldownAbilityId] ?? 0,
+            buff.cooldownAfterEnd,
+          );
+        }
         delete this.buffs[buffId];
       }
     }
@@ -279,6 +305,7 @@ export class CharacterBase {
   }
 
   addStatus(config) {
+    if (this.statusImmuneTicks > 0) return;
     const sourceId = config.sourceId ?? "unknown";
     const key = `${config.statusId}:${sourceId}`;
     const next = {
@@ -308,6 +335,7 @@ export class CharacterBase {
 
   interruptActions() {
     this.pendingAbility = null;
+    this.chargeShotState = null;
     this.castLockTicks = 0;
     this.dashTimer = 0;
     this.dashTicks = 0;

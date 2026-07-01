@@ -5,9 +5,49 @@ export function updateAbilityState(player, dt, context) {
   updateActiveHazards(player, context);
   if (player.isActionRestricted?.()) {
     player.pendingAbility = null;
+    player.chargeShotState = null;
     return;
   }
   updatePendingAbility(player, dt, context);
+}
+
+export function updateChargeReleaseAbility(player, ability, dt, input, context, inputCode) {
+  if (!ability || ability.behavior !== "chargeRelease") return false;
+
+  const state = player.chargeShotState;
+  if (!state && input.wasPressed(inputCode)) {
+    if (
+      player.pendingAbility ||
+      (player.castLockTicks ?? 0) > 0 ||
+      (player.cooldowns[ability.id] ?? 0) > 0 ||
+      (player.cooldownTicks[ability.id] ?? 0) > 0
+    ) {
+      return true;
+    }
+    player.chargeShotState = {
+      abilityId: ability.id,
+      elapsed: 0,
+      effectiveCharge: 0,
+      spent: 0,
+      isFull: false,
+    };
+    player.attackFlash = 0.12;
+    return true;
+  }
+
+  if (!state || state.abilityId !== ability.id) return Boolean(state);
+
+  if (input.isDown(inputCode)) {
+    advanceChargeShot(player, ability, dt);
+    return true;
+  }
+
+  if (input.wasReleased(inputCode) || !input.isDown(inputCode)) {
+    releaseChargeShot(player, ability, context);
+    return true;
+  }
+
+  return true;
 }
 
 export function useAbility(player, abilityId, context) {
@@ -60,6 +100,10 @@ export function useAbility(player, abilityId, context) {
     return false;
   }
 
+  if (ability.type === "buff" && player.buffs?.[ability.id]) {
+    return false;
+  }
+
   if (!trySpendAbilityCharge(player, ability)) {
     return false;
   }
@@ -96,9 +140,15 @@ export function useAbility(player, abilityId, context) {
       (ability.activeTicks ?? 0) +
       (ability.recoveryTicks ?? 0);
   }
-  player.cooldowns[abilityId] = ability.cooldown ?? 0;
+  const cooldownStartsAfterBuff =
+    ability.type === "buff" && ability.cooldownStartsAfterBuff;
+  if (!cooldownStartsAfterBuff) {
+    player.cooldowns[abilityId] = ability.cooldown ?? 0;
+  }
   if (ability.editorAction) {
-    player.cooldownTicks[abilityId] = ability.cooldownTicks ?? 0;
+    if (!cooldownStartsAfterBuff) {
+      player.cooldownTicks[abilityId] = ability.cooldownTicks ?? 0;
+    }
     if ((ability.castLockTicks ?? 0) > 0) {
       player.castLockTicks = ability.castLockTicks;
     }
@@ -201,10 +251,190 @@ function applyMovementAbility(player, ability) {
 function applyBuff(player, ability) {
   player.addBuff(ability.id, {
     remaining: ability.duration,
+    cooldownAbilityId: ability.cooldownStartsAfterBuff ? ability.id : null,
+    cooldownAfterEnd: ability.cooldownStartsAfterBuff ? ability.cooldown ?? 0 : 0,
     damageMultiplier: ability.damageMultiplier,
     knockbackMultiplier: ability.knockbackMultiplier,
     moveSpeedMultiplier: ability.moveSpeedMultiplier,
+    chargeTimeMultiplier: ability.chargeTimeMultiplier,
+    chargeCostMultiplier: ability.chargeCostMultiplier,
+    chargeCooldownMultiplier: ability.chargeCooldownMultiplier,
   });
+}
+
+function advanceChargeShot(player, ability, dt) {
+  const state = player.chargeShotState;
+  if (!state) return;
+
+  state.elapsed += dt;
+  const stages = getAdjustedChargeStages(player, ability);
+  const fullStage = stages[stages.length - 1];
+  const desiredCost = getChargeCostAtTime(
+    state.elapsed,
+    stages,
+    ability.fullHoldStaminaCostPerSecond ?? 0,
+  );
+  const costDelta = Math.max(0, desiredCost - state.spent);
+  const paid = Math.min(player.stamina, costDelta);
+  if (paid > 0) {
+    player.stamina = Math.max(0, player.stamina - paid);
+    player.staminaRegenTimer = player.staminaRegenDelay;
+    state.spent += paid;
+  }
+
+  state.effectiveCharge = getChargeTimeForCost(state.spent, stages);
+  state.stageIndex = getChargeStageIndex(state.effectiveCharge, stages);
+  state.isFull = state.effectiveCharge >= fullStage.time;
+  player.attackFlash = state.isFull ? 0.14 : 0.08;
+}
+
+function releaseChargeShot(player, ability, context) {
+  const state = player.chargeShotState;
+  player.chargeShotState = null;
+  if (!state) return;
+
+  const stages = getAdjustedChargeStages(player, ability);
+  const stage = [...stages].reverse().find((entry) => state.effectiveCharge >= entry.time);
+  if (!stage) return;
+
+  if (stage.hitscan) {
+    fireChargedHitscan(player, ability, stage, context);
+  } else {
+    fireChargedProjectile(player, ability, stage, context);
+  }
+
+  const cooldownMultiplier = getChargeBuff(player, ability)?.[
+    ability.cooldownBuffMultiplierKey
+  ] ?? 1;
+  player.cooldowns[ability.id] = (ability.cooldown ?? 0) * cooldownMultiplier;
+  player.attackFlash = 0.14;
+}
+
+function fireChargedProjectile(player, ability, stage, context) {
+  const direction = player.facing;
+  const size = ability.projectileSize ?? { w: 28, h: 6 };
+  const spawnTick = Number(context.simulationTick) || 0;
+  const instanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  context.combat.spawnProjectile({
+    id: instanceId,
+    attackInstanceId: instanceId,
+    owner: player,
+    abilityId: ability.id,
+    type: ability.type,
+    x: direction > 0 ? player.x + player.w + 4 : player.x - size.w - 4,
+    y: player.y + player.h * 0.5 - size.h / 2,
+    w: size.w,
+    h: size.h,
+    vx: (ability.projectileSpeed ?? 720) * direction,
+    vy: 0,
+    damage: stage.damage,
+    knockback: {
+      x: (ability.knockback?.x ?? 0) * direction,
+      y: ability.knockback?.y ?? 0,
+    },
+    life: ability.projectileLife ?? 1,
+    stun: ability.stun ?? 0.06,
+    effectType: ability.effectType,
+    screenShake: ability.screenShake,
+    projectileColor: "#d8dde8",
+  });
+}
+
+function fireChargedHitscan(player, ability, stage, context) {
+  const direction = player.facing;
+  const range = ability.hitscanRange ?? 760;
+  const height = ability.hitscanHeight ?? 8;
+  const spawnTick = Number(context.simulationTick) || 0;
+  const attackInstanceId = `${player.playerIndex}_${ability.id}_${spawnTick}`;
+  const x = direction > 0 ? player.x + player.w : player.x - range;
+  const y = player.y + player.h * 0.5 - height / 2;
+  context.combat.spawnHitbox({
+    attackInstanceId,
+    owner: player,
+    abilityId: ability.id,
+    type: "hitscan",
+    x,
+    y,
+    w: range,
+    h: height,
+    damage: stage.damage,
+    knockback: {
+      x: (ability.knockback?.x ?? 0) * direction,
+      y: ability.knockback?.y ?? 0,
+    },
+    knockbackMode: "facing",
+    effectType: ability.effectType,
+    screenShake: ability.screenShake,
+    durationTicks: 2,
+    tickRate: 60,
+    stun: ability.stun ?? 0.08,
+  });
+  context.visualEvents?.push({
+    type: "abilityUse",
+    effectType: ability.useEffectType ?? "chargedHitscan",
+    x,
+    y,
+    w: range,
+    h: height,
+    facing: direction,
+  });
+}
+
+function getAdjustedChargeStages(player, ability) {
+  const buff = getChargeBuff(player, ability);
+  const timeMultiplier = buff?.chargeTimeMultiplier ?? 1;
+  const costMultiplier = buff?.chargeCostMultiplier ?? 1;
+  return (ability.chargeStages ?? []).map((stage) => ({
+    ...stage,
+    time: stage.time * timeMultiplier,
+    staminaCost: stage.staminaCost * costMultiplier,
+  }));
+}
+
+function getChargeBuff(player, ability) {
+  return ability.chargeBuffId ? player.buffs?.[ability.chargeBuffId] : null;
+}
+
+function getChargeCostAtTime(time, stages, fullHoldCostPerSecond) {
+  if (stages.length === 0 || time <= 0) return 0;
+  let previousTime = 0;
+  let previousCost = 0;
+  for (const stage of stages) {
+    if (time <= stage.time) {
+      const span = Math.max(0.0001, stage.time - previousTime);
+      const t = (time - previousTime) / span;
+      return previousCost + (stage.staminaCost - previousCost) * t;
+    }
+    previousTime = stage.time;
+    previousCost = stage.staminaCost;
+  }
+  return previousCost + (time - previousTime) * fullHoldCostPerSecond;
+}
+
+function getChargeTimeForCost(cost, stages) {
+  if (stages.length === 0 || cost <= 0) return 0;
+  let previousTime = 0;
+  let previousCost = 0;
+  for (const stage of stages) {
+    if (cost <= stage.staminaCost) {
+      const span = Math.max(0.0001, stage.staminaCost - previousCost);
+      const t = (cost - previousCost) / span;
+      return previousTime + (stage.time - previousTime) * t;
+    }
+    previousTime = stage.time;
+    previousCost = stage.staminaCost;
+  }
+  return stages[stages.length - 1].time;
+}
+
+function getChargeStageIndex(time, stages) {
+  let index = -1;
+  for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+    if (time >= stages[stageIndex].time) {
+      index = stageIndex;
+    }
+  }
+  return index;
 }
 
 function fireProjectile(player, ability, context) {
@@ -430,6 +660,7 @@ function releaseAbilityHitbox(player, ability, context) {
     screenShake: ability.screenShake,
     duration,
     stun,
+    effects: (ability.effects ?? []).map((effect) => ({ ...effect })),
   });
   player.pendingAbility = null;
 }

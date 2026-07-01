@@ -2701,6 +2701,7 @@ export class Game {
         character.dashStopOnEnd ? 1 : 0,
         character.invincibleTicks ?? 0,
         character.hurtboxDisabledTicks ?? 0,
+        character.statusImmuneTicks ?? 0,
         character.currentStanceMode ?? "",
         character.modeSwapBonusBasicAttackReady ? 1 : 0,
         character.modeSwapBonusActionId ?? "",
@@ -2709,6 +2710,7 @@ export class Game {
         stableStringify(character.activeStatuses ?? {}),
         stableStringify(character.activeHazards ?? {}),
         stableStringify(character.usedOnceAbilities ?? {}),
+        stableStringify(character.chargeShotState ?? null),
         character.pendingAbility?.abilityId ?? "",
         quantize(character.pendingAbility?.startupRemaining ?? 0),
         character.pendingAbility?.startupTicksRemaining ?? "",
@@ -2773,6 +2775,7 @@ export class Game {
       dashStopOnEnd: character.dashStopOnEnd,
       invincibleTicks: character.invincibleTicks,
       hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+      statusImmuneTicks: character.statusImmuneTicks,
       currentStanceMode: character.currentStanceMode,
       modeSwapBonusBasicAttackReady: character.modeSwapBonusBasicAttackReady,
       modeSwapBonusActionId: character.modeSwapBonusActionId,
@@ -2781,6 +2784,9 @@ export class Game {
       activeStatuses: clonePlainObject(character.activeStatuses),
       activeHazards: clonePlainObject(character.activeHazards),
       usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
+      chargeShotState: character.chargeShotState
+        ? clonePlainObject(character.chargeShotState)
+        : null,
       cooldowns: { ...character.cooldowns },
       cooldownTicks: { ...character.cooldownTicks },
       pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
@@ -4023,6 +4029,18 @@ export class Game {
       swatch.className = "map-swatch";
       swatch.style.backgroundColor = map.backgroundColor;
       card.append(swatch, title, description);
+      if (map.gimmickLabel || map.difficulty || map.tags?.length) {
+        const meta = document.createElement("p");
+        meta.className = "map-card-meta";
+        meta.textContent = [
+          map.gimmickLabel ? `기믹: ${map.gimmickLabel}` : "",
+          map.difficulty ? `난이도: ${map.difficulty}` : "",
+          map.tags?.length ? map.tags.join(" / ") : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        card.append(meta);
+      }
       this.ui.mapCards.append(card);
     }
   }
@@ -4390,6 +4408,9 @@ function serializeCharacter(character) {
     activeHazards: clonePlainObject(character.activeHazards),
     usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
     hitStun: character.hitStun,
+    chargeShotState: character.chargeShotState
+      ? clonePlainObject(character.chargeShotState)
+      : null,
     hitFlash: character.hitFlash,
     attackFlash: character.attackFlash,
     skillFlash: character.skillFlash,
@@ -4403,6 +4424,7 @@ function serializeCharacter(character) {
     crowdControlArmorTicks: character.crowdControlArmorTicks,
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+    statusImmuneTicks: character.statusImmuneTicks,
     dashStopOnEnd: character.dashStopOnEnd,
     actionWeaponVisualId: character.actionWeaponVisualId,
     actionWeaponVisualTicks: character.actionWeaponVisualTicks,
@@ -4437,6 +4459,9 @@ function applyCharacterSnapshot(character, snapshot) {
   character.activeStatuses = clonePlainObject(snapshot.activeStatuses ?? {});
   character.activeHazards = clonePlainObject(snapshot.activeHazards ?? {});
   character.usedOnceAbilities = clonePlainObject(snapshot.usedOnceAbilities ?? {});
+  character.chargeShotState = snapshot.chargeShotState
+    ? clonePlainObject(snapshot.chargeShotState)
+    : null;
   character.hitStun = snapshot.hitStun ?? 0;
   character.hitFlash = snapshot.hitFlash ?? 0;
   character.attackFlash = snapshot.attackFlash ?? 0;
@@ -4451,6 +4476,7 @@ function applyCharacterSnapshot(character, snapshot) {
   character.crowdControlArmorTicks = snapshot.crowdControlArmorTicks ?? 0;
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
+  character.statusImmuneTicks = snapshot.statusImmuneTicks ?? 0;
   character.dashStopOnEnd = Boolean(snapshot.dashStopOnEnd);
   character.actionWeaponVisualId = snapshot.actionWeaponVisualId ?? null;
   character.actionWeaponVisualTicks = snapshot.actionWeaponVisualTicks ?? 0;
@@ -4503,6 +4529,9 @@ function serializeCharacterSnapshot(character, map) {
     activeStatuses: clonePlainObject(character.activeStatuses),
     activeHazards: clonePlainObject(character.activeHazards),
     usedOnceAbilities: clonePlainObject(character.usedOnceAbilities),
+    chargeShotState: character.chargeShotState
+      ? clonePlainObject(character.chargeShotState)
+      : null,
     pendingAbility: character.pendingAbility ? { ...character.pendingAbility } : null,
     castLockTicks: character.castLockTicks,
     comboNextActionId: character.comboNextActionId,
@@ -4511,6 +4540,7 @@ function serializeCharacterSnapshot(character, map) {
     crowdControlArmorTicks: character.crowdControlArmorTicks,
     invincibleTicks: character.invincibleTicks,
     hurtboxDisabledTicks: character.hurtboxDisabledTicks,
+    statusImmuneTicks: character.statusImmuneTicks,
     onGround: character.onGround,
     groundPlatformIndex: character.groundPlatform
       ? map.platforms.indexOf(character.groundPlatform)
@@ -4555,6 +4585,9 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.activeStatuses = clonePlainObject(snapshot.activeStatuses);
   character.activeHazards = clonePlainObject(snapshot.activeHazards);
   character.usedOnceAbilities = clonePlainObject(snapshot.usedOnceAbilities);
+  character.chargeShotState = snapshot.chargeShotState
+    ? clonePlainObject(snapshot.chargeShotState)
+    : null;
   character.pendingAbility = snapshot.pendingAbility ? { ...snapshot.pendingAbility } : null;
   character.castLockTicks = snapshot.castLockTicks ?? 0;
   character.comboNextActionId = snapshot.comboNextActionId ?? null;
@@ -4563,6 +4596,7 @@ function restoreCharacterSnapshot(character, snapshot, map) {
   character.crowdControlArmorTicks = snapshot.crowdControlArmorTicks ?? 0;
   character.invincibleTicks = snapshot.invincibleTicks ?? 0;
   character.hurtboxDisabledTicks = snapshot.hurtboxDisabledTicks ?? 0;
+  character.statusImmuneTicks = snapshot.statusImmuneTicks ?? 0;
   character.onGround = Boolean(snapshot.onGround);
   character.groundPlatform =
     Number.isInteger(snapshot.groundPlatformIndex) ? map.platforms[snapshot.groundPlatformIndex] : null;
@@ -4704,4 +4738,3 @@ function hashString(value) {
 function clonePlainObject(value) {
   return JSON.parse(JSON.stringify(value ?? {}));
 }
-
