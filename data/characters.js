@@ -1,7 +1,9 @@
 import { adaptEditorCharacters } from "./editorAdapter.js";
 import { ELDRICK_EDITOR_VISUAL } from "./editorEldrickVisual.js";
 
-export const CHARACTERS = {
+export const MINIMUM_JUMP_POWER = 570;
+
+export const CHARACTERS = enforceMinimumJumpPower({
   basic: {
     id: "basic",
     name: "Basic",
@@ -89,4 +91,19 @@ export const CHARACTERS = {
     },
   },
   ...adaptEditorCharacters(),
-};
+});
+
+function enforceMinimumJumpPower(characters) {
+  return Object.fromEntries(
+    Object.entries(characters).map(([id, character]) => [
+      id,
+      {
+        ...character,
+        stats: {
+          ...character.stats,
+          jumpPower: Math.max(character.stats.jumpPower, MINIMUM_JUMP_POWER),
+        },
+      },
+    ]),
+  );
+}

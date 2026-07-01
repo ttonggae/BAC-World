@@ -42,7 +42,9 @@ export function updateChargeReleaseAbility(player, ability, dt, input, context, 
     return true;
   }
 
-  if (input.wasReleased(inputCode) || !input.isDown(inputCode)) {
+  const wasReleased =
+    typeof input.wasReleased === "function" ? input.wasReleased(inputCode) : false;
+  if (wasReleased || !input.isDown(inputCode)) {
     releaseChargeShot(player, ability, context);
     return true;
   }

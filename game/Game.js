@@ -4185,6 +4185,7 @@ class OnlineVirtualInput {
   constructor() {
     this.down = new Set();
     this.pressed = new Set();
+    this.released = new Set();
   }
 
   setInputs(p1Input, p2Input) {
@@ -4193,6 +4194,10 @@ class OnlineVirtualInput {
     addMappedInput(next, normalizeOnlineInput(p2Input), ONLINE_P2_CONTROLS);
 
     this.pressed.clear();
+    this.released.clear();
+    for (const code of this.down) {
+      if (!next.has(code)) this.released.add(code);
+    }
     for (const code of next) {
       if (!this.down.has(code)) this.pressed.add(code);
     }
@@ -4207,21 +4212,28 @@ class OnlineVirtualInput {
     return this.pressed.has(code);
   }
 
+  wasReleased(code) {
+    return this.released.has(code);
+  }
+
   reset() {
     this.down.clear();
     this.pressed.clear();
+    this.released.clear();
   }
 
   createSnapshot() {
     return {
       down: [...this.down],
       pressed: [...this.pressed],
+      released: [...this.released],
     };
   }
 
   restoreSnapshot(snapshot = {}) {
     this.down = new Set(snapshot.down ?? []);
     this.pressed = new Set(snapshot.pressed ?? []);
+    this.released = new Set(snapshot.released ?? []);
   }
 }
 
