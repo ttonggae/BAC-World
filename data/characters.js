@@ -1,4 +1,5 @@
 import { adaptEditorCharacters } from "./editorAdapter.js";
+import { ELDRICK_EDITOR_VISUAL } from "./editorEldrickVisual.js";
 
 export const CHARACTERS = {
   basic: {
@@ -61,6 +62,29 @@ export const CHARACTERS = {
       basicAttack: "basic_punch",
       skill1: "quick_slash",
       skill2: "back_step",
+      special: null,
+    },
+  },
+  eldrick: {
+    id: "eldrick",
+    name: "Eldrick",
+    description: "핀델가의 숙련된 궁수, 대격변 후 일족을 찾고있다.",
+    color: "#24385d",
+    size: { w: 40, h: 40 },
+    stats: {
+      maxHp: 70,
+      maxStamina: 80,
+      moveSpeed: 250,
+      jumpPower: 570,
+      weight: 0.95,
+      staminaRegenRate: 30,
+      staminaRegenDelay: 0.5,
+    },
+    visual: ELDRICK_EDITOR_VISUAL,
+    abilities: {
+      basicAttack: "eldrick_manjak",
+      skill1: "findel_breath",
+      skill2: "escape_smoke_bomb",
       special: null,
     },
   },
