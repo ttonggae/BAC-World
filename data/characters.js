@@ -1,9 +1,6 @@
 import { adaptEditorCharacters } from "./editorAdapter.js";
-import { ELDRICK_EDITOR_VISUAL } from "./editorEldrickVisual.js";
 
-export const MINIMUM_JUMP_POWER = 570;
-
-export const CHARACTERS = enforceMinimumJumpPower({
+export const CHARACTERS = {
   basic: {
     id: "basic",
     name: "Basic",
@@ -67,43 +64,5 @@ export const CHARACTERS = enforceMinimumJumpPower({
       special: null,
     },
   },
-  eldrick: {
-    id: "eldrick",
-    name: "Eldrick",
-    description: "핀델가의 숙련된 궁수, 대격변 후 일족을 찾고있다.",
-    color: "#24385d",
-    size: { w: 40, h: 40 },
-    stats: {
-      maxHp: 70,
-      maxStamina: 80,
-      moveSpeed: 250,
-      jumpPower: 570,
-      weight: 0.95,
-      staminaRegenRate: 30,
-      staminaRegenDelay: 0.5,
-    },
-    visual: ELDRICK_EDITOR_VISUAL,
-    abilities: {
-      basicAttack: "eldrick_manjak",
-      skill1: "findel_breath",
-      skill2: "escape_smoke_bomb",
-      special: null,
-    },
-  },
   ...adaptEditorCharacters(),
-});
-
-function enforceMinimumJumpPower(characters) {
-  return Object.fromEntries(
-    Object.entries(characters).map(([id, character]) => [
-      id,
-      {
-        ...character,
-        stats: {
-          ...character.stats,
-          jumpPower: Math.max(character.stats.jumpPower, MINIMUM_JUMP_POWER),
-        },
-      },
-    ]),
-  );
-}
+};
